@@ -1,0 +1,73 @@
+#
+fileControl:
+  news:
+    path: "./datda/news/"
+    name: ""
+  stock_info:
+    path: "./data/stock_info/"
+    name: "stock_list.csv"
+  stock_data:
+    path: "./data/stock_data/"
+    name: ""
+  stock_theme:
+    path: "./data/theme_code/"
+    name: ""
+  selected_items:
+    path: "./data/selected_items/"
+    name: ""
+  models:
+    path: "./data/models/"
+    name: ""
+  model_results:
+    keywords:
+      path: "./data/model_results/keywords/"
+      name: ""
+
+## main 설정값
+mainInit:
+  enable_test: False
+
+  ## step1 진행 여부ㅓ
+  ena_step1: False
+  ## step2 진행 여부
+  ena_step2: True
+
+  ## step3 용
+  enable_load_stock_data: False
+  enable_run_forcast_model: False
+
+  test_code: "122870"
+  period_days : 365*2
+  time_format : "%Y-%m-%d"
+
+
+scoreRule:
+  score_debt_ratio:
+    - 0
+    - 100
+    - 150
+    - 200
+
+  score_quick_ratio:
+    - 10000
+    - 100
+    - 75
+    - 50
+
+  score_reserve_ratio:
+    - 10000000
+    - 100
+    - 0
+
+  score_market_value:
+    - 0
+    - 200000000000
+    - 400000000000
+    - 600000000000
+
+
+
+keyList:
+  dart:
+    key: "48dff989e7225f28049553a41b5114232ef8c9f2"
+

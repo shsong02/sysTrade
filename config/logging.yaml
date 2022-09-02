@@ -1,0 +1,23 @@
+version: 1
+disable_existing_loggers: true
+formatters:
+  simple:
+    format: '%(asctime)s - %(levelname)s - [%(funcName)s:%(lineno)d]: %(message)s'
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: simple
+    stream: ext://sys.stdout
+  file:
+    class: logging.FileHandler
+    level: DEBUG
+    filename: log/systemTrade.log
+loggers:
+  simpleExample:
+    level: DEBUG
+    handlers: [console]
+    propagate: no
+root:
+  level: DEBUG
+  handlers: [console,file]
