@@ -1,4 +1,6 @@
 ## 네이버 뉴스 api
+import re
+import shutil
 import sys
 import urllib.request
 import datetime
@@ -220,42 +222,37 @@ class newsCrawler:
             start = jsonResponse['start'] + jsonResponse['display']
             jsonResponse = self.getNaverSearch(node, start, 100)  # [CODE 2]
 
-        print('전체 검색 : %d 건' % total)
+        # print('전체 검색 : %d 건' % total)
 
         df = pd.json_normalize(jsonResult)
         df2 = df.sort_values('pDate', ascending=False)
 
 
-        print("가져온 데이터 : %d 건" % (cnt))
+        # print("가져온 데이터 : %d 건" % (cnt))
 
+        ## df 정리
+        df2['pDate'] = pd.to_datetime(df2['pDate'])
+        df2['Day'] = df2['pDate'].dt.strftime("%Y-%m-%d")
 
-        # PLOTTING
-        if self.config["trend_display"] == True:
-            df2['pDate'] = pd.to_datetime(df2['pDate'])
-            df2['Day'] = df2['pDate'].dt.strftime("%Y-%m-%d")
+        ## 태그 제거
+        def remove_html(sentence):
+            sentence = re.sub('(<([^>]+)>)', '', sentence)
+            for chk in ['&apos;','&quot;', '<b>', '</b>', 'R&amp;D']:
+                sentence = sentence.replace(chk, '')
+            return sentence
 
-            df_grp = df2.groupby('Day').count()
-            start = df_grp.index.to_list()[0]
-            end = df_grp.index.to_list()[-1]
-            dt_start = datetime.datetime.strptime(start, "%Y-%m-%d")
-            dt_end = datetime.datetime.strptime(end, "%Y-%m-%d")
+        df2['title'] = df2['title'].apply(remove_html)
+        df2['description'] = df2['description'].apply(remove_html)
 
-            if (dt_end - dt_start) < datetime.timedelta(days=30 * 6):
-                dt_start_2 = dt_end - datetime.timedelta(days=30 * 6)
-            else:
-                dt_start_2 = dt_start
-            fig, ax = plt.subplots(figsize=(12, 6))
-            fig = sns.barplot(x=df_grp.index, y="cnt", data=df_grp,
-                              estimator=sum, ci=None, ax=ax)
+        ## column 제거
+        df2= df2.drop(['org_link', 'cnt'], axis=1)
 
-            # x_dates = df_grp.index.dt.strftime('%Y-%m-%d').sort_values().unique()
-            x_dates =  pd.date_range(dt_start_2, dt_end, freq='d')
-            ax.set_xticklabels(labels=df_grp.index, rotation=45, ha='right')
-            # ax.set_xticklabels(labels=x_dates, rotation=45, ha='right')
+        ## column 명 변경
+        df2.rename(columns={'Day':'Date'}, inplace=True)
+        for col in ['title', 'description', 'link', 'pDate']:
+            df2.rename(columns={col: f'news_{col}'}, inplace=True)
 
-            plt.show()
-
-        df2.rename(columns={"pDate":"date", "description":"content"}, inplace=True)
+        df2.set_index('Date', inplace=True, drop=True)
 
         ## 파일로 저장
         if self.config["save"] == True:
@@ -265,6 +262,60 @@ class newsCrawler:
             file_name = f"{file_name}_{now}.csv"
             stu.file_save(df2, file_path,  file_name, replace=self.config["save_replace"])
             print(f"네이버 뉴스에서 검색어({self.src_text}) 를 검색한 결과를 파일로 저장하였습니다. (파일명: {file_path+file_name})")
+        else:
+            file_path= self.file_manager["news"]["path"]
+            file_name = self.src_text.replace(' ', '-')
+            now = datetime.datetime.now().strftime("%Y-%m-%d")
+            file_name = f"{file_name}_{now}.csv"
+
+        # PLOTTING
+        if self.config["trend_display"] == True:
+
+            df_grp = df2.groupby('Date').count()
+            start = df_grp.index.to_list()[0]
+            end = df_grp.index.to_list()[-1]
+            dt_start = datetime.datetime.strptime(start, "%Y-%m-%d")
+            dt_end = datetime.datetime.strptime(end, "%Y-%m-%d")
+
+            if (dt_end - dt_start) < datetime.timedelta(days=30 * 6):
+                dt_start_2 = dt_end - datetime.timedelta(days=30 * 6)
+            else:
+                dt_start_2 = dt_start
+            # fig, ax = plt.subplots(figsize=(12, 6))
+            sns.set(rc={'figure.figsize': (20, 10), 'font.family': 'AppleGothic'})
+            p =sns.barplot(x=df_grp.index, y="news_title", data=df_grp, estimator=sum, ci=None, )
+            p.set_title(f"종목 이름: {self.src_text}")
+            p.set(xlabel='뉴스 등록 날짜', ylabel='뉴스 Count')
+
+            xticks = df_grp.index.to_list()
+            xpos = []
+            for i in range(0,len(xticks),5):
+                xpos.append(i)
+            p.set_xticks(xpos)
+            p.set_xticklabels(xticks[::5])
+
+            plt.xticks(rotation=-45)
+
+            plt.show()
+            file_name = file_name.replace('.csv', '.png')
+            file_path = file_path + 'news_count/'
+
+            ## 폴더 생성
+            try:
+                if not os.path.exists(file_path):
+                    os.makedirs(file_path)
+                else:
+                    if self.config["save_replace"] == True:
+                        shutil.rmtree(file_path)
+                        os.makedirs(file_path)
+                    else:
+                        pass
+            except Exception as e:
+                raise e
+            plt.savefig(file_path+file_name, dpi=300)
+
+        # df2.rename(columns={"pDate":"date", "description":"content"}, inplace=True)
+
 
 
         return df2
@@ -280,11 +331,11 @@ class newsCrawler:
             response = urllib.request.urlopen(req)
             now = datetime.datetime.now()
             if response.getcode() == 200:
-                print(f"[{now}] Url Request Success: {url}")
+                # print(f"[{now}] Url Request Success: {url}")
                 return response.read().decode('utf-8')
         except Exception as e:
-            print(e)
-            print("[%s] Error for URL : %s" % (datetime.datetime.now(), url))
+            # print(e)
+            # print("[%s] Error for URL : %s" % (datetime.datetime.now(), url))
             return None
 
 
@@ -324,9 +375,9 @@ class newsCrawler:
 
 
 if __name__ == '__main__':
-    words = '헤드라인 양육지원'
+    words = '에코프로비엠'
     nc = newsCrawler()
-    # nc.search_keyword(words)
-    nc.search_interval(['20220817', '20220820'])
+    nc.search_keyword(words)
+    # nc.search_interval(['20220817', '20220820'])
     # nc.search_daily('20200820', [0,10])
 

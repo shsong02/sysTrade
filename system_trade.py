@@ -1,19 +1,15 @@
 import os
 
 import FinanceDataReader as fdr
-import numpy as np
 import pandas as pd
 import os
 import shutil
-import datetime
-import bokeh
 import backtrader as bt
 import yaml
 import pprint
-import logging
-import numpy as np
 import math
 import time
+from datetime import datetime, timedelta
 
 ## html
 import requests
@@ -25,6 +21,10 @@ from multiprocessing import Pool
 import multiprocessing as mp
 from functools import partial
 
+#chart
+from pykrx import stock
+from pykrx import bond
+
 #Dart
 import OpenDartReader
 
@@ -32,6 +32,7 @@ import OpenDartReader
 ## local file
 from forcast_model import forcastModel
 from custom_logger import CustomFormatter
+from news_crawler import newsCrawler
 import st_utils as stu
 
 ######### Global ############
@@ -227,38 +228,40 @@ class systemTrade:
                             elif val  > 0 :
                                 sc += 1*(cnt+1)
                             else:  ## minus
-                                sc -= 3*(cnt+1)  ## 마이너스 일 경우, 다음 분기에 높은 스코어가 나오기 때문에, 강한 마이너스로 보정해야함
+                                sc -= 2*(cnt+1)  ## 마이너스 일 경우, 다음 분기에 높은 스코어가 나오기 때문에, 강한 마이너스로 보정해야함
                                 pass
                         elif idx == '영업이익률':  ## steady 한 것이 제일 좋음
                             if val > 20 :  ## 너무 높으면 신규 사업자 진입함
-                                sc += 1
+                                sc += 3
                             elif val > 10 :
                                 sc += 2
                             elif val > 0 :
-                                sc += 3
+                                sc += 1
                             else:
                                 sc -= 2
                         elif idx == 'ROE':
                             if val > 20 :  ## 너무 높으면 이미 성숙한 사업이라 낮아질 일만 있음
-                                sc += 1
+                                sc += 3
                             elif val > 10 :
                                 sc += 2
                             elif val > 0 :
-                                sc += 3
+                                sc += 1
                             elif val > -10:
                                 sc -= 3
                             else:
-                                score_drop_values.append(True)
+                                # score_drop_values.append(True)
                                 sc -= 3
                             pass
                         elif idx == '부채비율':
                             if val > 250:  ## 부채 비율이 높으면 그냥 제외 시킴
-                                score_drop_values.append(True)
+                                # score_drop_values.append(True)
                                 sc += 0
                             elif val > 150:
                                 sc += 1
                             elif val > 100:
                                 sc += 2
+                            elif val > 0:
+                                sc += 3
                             else:
                                 sc -= 3
                             pass
@@ -467,7 +470,7 @@ class systemTrade:
         ######################
         ## 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
         if params["ena_step1"] == True:
-            df_stocks = st.stock_list()
+            df_stocks = self.stock_list()
         else:
             df_stocks = pd.read_csv(files["stock_info"]["path"] + files["stock_info"]["name"], index_col=0)
 
@@ -506,14 +509,15 @@ class systemTrade:
             df_fin  = df_stocks.join(df_stocks_state)
 
             ## 재무제표 조건에 만족하지 못하는 종목들은 제거
-            df_step2 = df_fin[df_fin.score_drop == False]
+            df_step2 = df_fin
+            # df_step2 = df_fin[df_fin.score_drop == False]
 
             ## 시간 총액별 그룹을 나눈다. (그룹별 대응 방법이 달라질 수 있음)
 
 
 
             ## 파일 저장
-            now = datetime.datetime.now().strftime("%Y-%m-%d")
+            now = datetime.now().strftime("%Y-%m-%d")
             file_path = self.file_manager["selected_items"]["path"]
             file_name = self.file_manager["selected_items"]["name"]
             if file_name == "":
@@ -538,64 +542,44 @@ class systemTrade:
                 - cond4: 공매도 
         '''
 
+        ## 종목별 뉴스 수집정보
+        nc = newsCrawler()
+        nc.config['trend_display'] = False
+        cnt = 0
+        duration = self.param_init['duration']
+        df = df_step2.sort_values(by='total_score', ascending=False)
+        for name, code in zip(df.index, df.Symbol):
+            code = str(code).zfill(6)
 
+            ## 기본 주가 정보
+            end_dt = datetime.today()
+            end = end_dt.strftime(self.param_init["time_format"])
+            st_dt = end_dt - timedelta(days=duration)
+            st = st_dt.strftime(self.param_init["time_format"])
+            df_chart = fdr.DataReader(code, st, end)
 
-        # init chrome driver
-        # opt = webdriver.ChromeOptions()
-        # opt.add_argument('headless')
-        # driver = webdriver.Chrome(chrome_options=opt)
-        #
-        #
-        # for idx, code in enumerate(df_stocks['Symbol'].to_list()):
-        #     if params["enable_test"] == True:
-        #         code = params["test_code"]
-        #     code = str(code).zfill(6)
-        #
-        #     states = []
-        #     scores, code_drop, total_price = st.finance_state(driver, code, mode='annual')
-        #     states.append(total_price)
-        #     for score in scores:
-        #         states.append(score)
-        #     total_score = sum(scores)
-        #     states.append(total_score)
-        #     states.append(code_drop)
-        #
-        #     _msg = f"종목코드({code}) 의 시강총액 및 제무제표 스코어는 {states} 입니다."
-        #     logger.info(_msg)
-        #     df_stocks.loc[idx, "MarketValue":"ScoreDrop"] = states
-        #
-        #     ## 차트 그리기
-        #     if params["enable_load_stock_data"] == True:
-        #         today = datetime.datetime.now() - datetime.timedelta(days=7)
-        #         end = today.strftime(params["time_format"])
-        #
-        #         start = today - datetime.timedelta(days=params[""])
-        #         start = start.strftime(params["time_format"])
-        #         date = [start, end]
-        #         df = st.load_stock_data(code, date, display=params["enable_test"])
-        #
-        #         if params["enable_run_forcast_mode"] == True:
-        #             # forcasting 모델 적용 (prophet)
-        #             fm = forcastModel(df)
-        #             fm.model_prophet()
-        #
-        #     ## 백테스트용
-        #     # main.back_test(code)
-        #
-        #     if params["enable_test"] == True:
-        #         break
-        #
-        # driver.close()
-        # ## 최종 stock code 정리
-        # now = datetime.datetime.now().strftime("%Y-%m-%d")
-        # df_fin = df_stocks[df_stocks.ScoreDrop == False]
-        # file_path = self.file_manager["selected_items"]["path"]
-        # file_name = self.file_manager["selected_items"]["name"]
-        # if file_name == "":
-        #     file_name = f"stock_items_{now}.csv"
-        # stu.file_save(df_fin, file_path, file_name, replace=False)
-        #
-        # return df_fin
+            ## advanced 정보 (일자별 PER, ..)
+            df_chart2 = stock.get_market_fundamental(st.replace("-",""), end.replace("-",""), code, freq='d')
+
+            ##일자별 시가 총액 (시가총액, 거래량, 거래대금, 상장주식수)
+            df_chart3 = stock.get_market_cap(st.replace("-",""), end.replace("-",""), code)
+
+            ##일자별 외국인 보유량 및 외국인 한도소진률
+            df_chart4 = stock.get_exhaustion_rates_of_foreign_investment(st.replace("-",""), end.replace("-",""), code)
+
+            ## 공매도 정보
+            df_chart5 = stock.get_shorting_balance_by_date(st.replace("-",""), end.replace("-",""), code)
+
+            ## 뉴스 정보 수집
+            logger.info(f"종목 ({name} - {code}) 의 뉴스정보 수집을 시작합니다. ")
+            df_news = nc.search_keyword(name)
+
+            ## for test
+            # if cnt==10:
+            #     break
+            cnt +=1
+        print(df_news)
+
 
     ############## internal funct ################
     def _make_score(self, score_data, score_list, mode='last'):

@@ -10,7 +10,7 @@ fileControl:
     path: "./data/stock_data/"
     name: ""
   stock_theme:
-    path: "./data/theme_code/"
+    path: "./data/theme/"
     name: ""
   selected_items:
     path: "./data/selected_items/"
@@ -18,10 +18,13 @@ fileControl:
   models:
     path: "./data/models/"
     name: ""
+  keywords:
+    path: "./data/reference/"
+    name: ""
   model_results:
     keywords:
       path: "./data/model_results/keywords/"
-      name: ""
+      name: "종목별_업종정보_20220902.csv"
 
 ## main 설정값
 mainInit:
@@ -39,6 +42,8 @@ mainInit:
   test_code: "122870"
   period_days : 365*2
   time_format : "%Y-%m-%d"
+  duration: 720 # 2 years
+  duration_theme: 30
 
 
 scoreRule:

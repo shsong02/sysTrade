@@ -7,7 +7,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 ##core
-from lib.marcap import marcap_data
 import FinanceDataReader as fdr
 import mplfinance as mpf
 from mplfinance import _styles
@@ -45,30 +44,48 @@ class chartMonitor:
         self.keys = config["keyList"]
         pass
 
-    def run(self):
+    def run(self, code='selected_item', date=[], data='none' ):
         '''
+
+            data 에 통계 수치를 더하여 반환함.
+
             제무재표 좋은 종목중에 Threshold socre 보다 높은 종목을 선발한다.
             그중에서 진입 시점을 임박한 종목을 선발한다.
                 - cond1: RSI
                 - cond2: 볼린저
                 - cond3: 거래량
                 - cond4: 공매도
+
+            args:
+                - data (dataframe) : OHLCV 컬럼명을 유지해야 함
         '''
 
-        ## 1) 데이터 준비
-        file_path = self.file_manager["selected_items"]["path"]
-        ## 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
-        file_name = os.listdir('./data/selected_items/')[0]
-        df_stocks = pd.read_csv(file_path + file_name, index_col=0)
-        df_stocks = df_stocks.sort_values(by='total_score', ascending=False)
+        if code == 'selected_item':
+            ## 1) 데이터 준비
+            file_path = self.file_manager["selected_items"]["path"]
+            ## 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
+            file_name = os.listdir('./data/selected_items/')[0]
+            df_stocks = pd.read_csv(file_path + file_name, index_col=0)
+            df_stocks = df_stocks.sort_values(by='total_score', ascending=False)
+            code = str(df_stocks.iloc[1]['Symbol'])
+        else:
+            code = str(code).zfill(6)
 
-        ##data 가져오기
-        code = str(df_stocks.iloc[1]['Symbol'])
-        now = datetime.today()
-        now_str = now.strftime(self.param_init["time_format"])
-        pre_date = now - timedelta(days=365*2)
-        pre_date_str = pre_date.strftime(self.param_init["time_format"])
-        df = fdr.DataReader(code, pre_date_str, now_str)
+
+        ## 기간 처리
+        if len(date) == 0 :
+                end_dt = datetime.today()
+                end = end_dt.strftime(self.param_init["time_format"])
+                st_dt = end_dt - timedelta(days=30)  ## default 는 1달 ..
+                st = st_dt.strftime(self.param_init["time_format"])
+        else:
+            st = date[0]
+            end = date[1]
+
+        if data == 'none':
+            df = fdr.DataReader(code, st, end)
+        else:
+            df = data.copy()
 
         ## make sub-plot
         macd = self._macd(df, 12, 26, 9)
@@ -113,7 +130,8 @@ class chartMonitor:
                  scale_padding={'right':2.0, 'left':0.5},
                  tight_layout=True)
 
-        pass
+
+        return df
 
     ###### Chart
     def _obv(self, df, mav=20):
