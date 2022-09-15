@@ -1,15 +1,19 @@
 import os
 import pprint
 
+import matplotlib
 import numpy as np
 import yaml
 import pandas as pd
 from datetime import datetime, timedelta
+from matplotlib import font_manager, rc
+import matplotlib
 
 ##core
 import FinanceDataReader as fdr
 import mplfinance as mpf
-from mplfinance import _styles
+from pykrx import stock
+from pykrx import bond
 
 ## local file
 import st_utils as stu
@@ -35,14 +39,13 @@ class chartMonitor:
             print (e)
 
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
-        pprint.pprint(config)
+        # pprint.pprint(config)
 
         ## global 변수 선언
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
         self.score_rule = config["scoreRule"]
         self.keys = config["keyList"]
-        pass
 
     def run(self, code='selected_item', date=[], data='none' ):
         '''
@@ -87,18 +90,55 @@ class chartMonitor:
         else:
             df = data.copy()
 
+
+        ## 추가 정보들
+        df_out = pd.DataFrame()
+
+        ## advanced 정보 (일자별 PER, ..)
+        df_chart2 = stock.get_market_fundamental(date[0], date[1], code, freq='d')
+        df_out = df.join(df_chart2)
+
+        ##일자별 시가 총액 (시가총액, 거래량, 거래대금, 상장주식수)
+        df_chart3 = stock.get_market_cap(date[0], date[1], code)
+        df_out = df_out.join(df_chart3)
+
+        ##일자별 외국인 보유량 및 외국인 한도소진률
+        df_chart4 = stock.get_exhaustion_rates_of_foreign_investment(date[0], date[1], code)
+        df_chart4.drop(['상장주식수', '한도수량', '한도소진률' ], axis=1, inplace=True)  ## 중복
+        df_chart4.rename(columns={'보유수량': '외국인_보유수량',  '지분율':'외국인_지분율'}, inplace=True)
+        df_out = df_out.join(df_chart4)
+
+        ## 공매도 정보
+        df_chart5 = stock.get_shorting_balance_by_date(date[0], date[1], code)
+        df_chart5.drop(['상장주식수', '시가총액' ], axis=1, inplace=True)  ## 중복
+        df_chart5.rename(columns={'비중': '공매도비중', }, inplace=True)
+        df_out = df_out.join(df_chart5)
+
         ## make sub-plot
-        macd = self._macd(df, 12, 26, 9)
-        stochastic = self._stochastic(df, 14, 3)
-        rsi = self._rsi(df, 14)
-        bol = self._bollinger(df, 20)
-        obv = self._obv(df, mav=20)
+        macd = self._macd(df_out, 12, 26, 9)
+        stochastic = self._stochastic(df_out, 14, 3)
+        rsi = self._rsi(df_out, 14)
+        bol = self._bollinger(df_out, 20)
+        obv = self._obv(df_out, mav=20)
+
+        vol_abn = self._volume_anomaly(df_out, window=14, quantile=0.90)
 
 
-        rsi_pannel = 2
-        obv_pannel = 3
-        macd_pannel= 4
-        stoch_pannel= 5
+
+
+        ## Pannel number
+        pannel_id = {
+            'rsi': 2,
+            'per': 3,
+            'foreign': 4,
+            'volume': 5,
+            'short': 6,
+           # 'obv' = 3
+           #  'macd': 5,
+           #  'stochestic': 6,
+        }
+        pannel_cnt = len(pannel_id)
+
 
         ## add sub-plot
         add_plots = [
@@ -106,34 +146,86 @@ class chartMonitor:
             mpf.make_addplot(bol['bol_lower'], color='#1f77b4'),
 
             ## rsi
-            mpf.make_addplot(rsi['rsi'], ylim=[0, 100], ylabel='RSI',  panel=rsi_pannel),
-            mpf.make_addplot(rsi['rsi_high'], color='r', panel=rsi_pannel),
-            mpf.make_addplot(rsi['rsi_low'], color='b', panel=rsi_pannel),
+            mpf.make_addplot(rsi['rsi'], ylim=[0, 100], ylabel='RSI',  panel=pannel_id['rsi']),
+            mpf.make_addplot(rsi['rsi_high'], color='r', panel=pannel_id['rsi']),
+            mpf.make_addplot(rsi['rsi_low'], color='b', panel=pannel_id['rsi']),
 
             ## obv
-            mpf.make_addplot(obv['obv'], ylabel='OBV', color='#8c564b', panel=obv_pannel),
-            # mpf.make_addplot(obv['obv_ema'], color='#e377c2', panel=obv_pannel),
+            # mpf.make_addplot(obv['obv'], ylabel='OBV', color='#8c564b', panel=pannel_id['obv]),
+            # mpf.make_addplot(obv['obv_ema'], color='#e377c2', panel=pannel_id['obv']),
+
+            ## per
+            mpf.make_addplot(df_out['PER'], ylabel='PER', color='#8c564b', panel=pannel_id['per']),
+            mpf.make_addplot(df_out['PBR'], ylabel='PBR', color='#e377c2', secondary_y=True, panel=pannel_id['per']),
+
+            ## for
+            mpf.make_addplot(df_out['외국인_지분율'], ylabel='Foreign ratio', color='black', panel=pannel_id['foreign']),
+
+            ## volume anomaly
+            mpf.make_addplot(df_out['VolumeThreshold'], ylabel='Turnover ratio', color='orange', panel=pannel_id['volume']),
+            mpf.make_addplot(df_out['VolumeTurnOver'],  color='black', panel=pannel_id['volume']),
+            mpf.make_addplot(df_out['VolumeAnomaly'], type='scatter', marker='v', markersize=200, ylabel='Turnover ratio', color='red',
+                             panel=pannel_id['volume']),
+
+            mpf.make_addplot(df_out['공매도잔고'], ylabel='Short Selling', color='black',
+                             panel=pannel_id['short']),
 
             # macd
-            # mpf.make_addplot((macd['macd']), color='#606060',ylabel='MACD', secondary_y=False,  panel=macd_pannel ),
-            # mpf.make_addplot((macd['signal']), color='#1f77b4',  secondary_y=False, panel=macd_pannel),
-            # mpf.make_addplot((macd['bar_positive']), type='bar', color='#4dc790', panel=macd_pannel),
-            # mpf.make_addplot((macd['bar_negative']), type='bar', color='#fd6b6c', panel=macd_pannel),
+            # mpf.make_addplot((macd['macd']), color='#606060',ylabel='MACD', secondary_y=False,  panel=pannel_id['macd'] ),
+            # mpf.make_addplot((macd['signal']), color='#1f77b4',  secondary_y=False, panel=pannel_id['macd']),
+            # mpf.make_addplot((macd['bar_positive']), type='bar', color='#4dc790', panel=pannel_id['macd']),
+            # mpf.make_addplot((macd['bar_negative']), type='bar', color='#fd6b6c', panel=pannel_id['macd']),
 
             #stochastic
-            # mpf.make_addplot((stochastic[['%K', '%D', '%SD', 'UL', 'DL']]), ylim=[0, 100], ylabel='Stoch', panel=stoch_pannel)
+            # mpf.make_addplot((stochastic[['%K', '%D', '%SD', 'UL', 'DL']]), ylim=[0, 100], ylabel='Stoch', panel=pannel_id['stochestic'])
         ]
 
+        title = f"Code ({code}) 's period: {date[0]} ~ {date[1]} "
+        pannel_ratio = [3,1]
+        for i in range(pannel_cnt):
+            pannel_ratio.append(1)
         mpf.plot(df, type='candle', mav=(5,20), volume=True, addplot=add_plots,
-                 figsize=(20,12),
-                 figscale=0.8, style='yahoo', panel_ratios=(3,1,1,1),
+                 figsize=(20, 8 + 3*pannel_cnt),
+                 title=title,
+                 figscale=0.8, style='yahoo', panel_ratios=tuple(pannel_ratio),
                  scale_padding={'right':2.0, 'left':0.5},
+                 warn_too_much_data=5000,
                  tight_layout=True)
 
 
-        return df
+        return df_out
 
     ###### Chart
+    def _volume_anomaly(self, df, window=14, quantile=0.90):
+        df["VolumeTurnOver"] = round(df["Volume"] / df["상장주식수"] * 100, 2)
+        def make_band(data, quantile):
+            upper = np.mean(data) + np.nanquantile(data, quantile)
+            lower = np.mean(data) - np.nanquantile(data, quantile)
+            return upper, lower
+
+        uppers = []
+        anomalies = []
+        for i in range(len(df)):
+            if i < window:
+                data = df.VolumeTurnOver.iloc[0:i+1].to_list()
+            else:
+                data = df.VolumeTurnOver.iloc[i-window+1: i+1].to_list()
+            upper, lower = make_band(data, quantile=quantile)
+            uppers.append(round(upper,2))
+
+            chk_data = df.VolumeTurnOver.iat[i]
+            if  chk_data > upper:
+                anomalies.append(chk_data)
+            else:
+                anomalies.append(np.nan)
+
+        df["VolumeThreshold"] = uppers
+        df["VolumeAnomaly"] = anomalies
+
+        return df
+
+
+
     def _obv(self, df, mav=20):
         obv = []
         obv.append(0)

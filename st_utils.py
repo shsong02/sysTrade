@@ -78,6 +78,13 @@ def file_load(file_path, file_name, type='csv'):
     return data
 
 
+def period_to_str(period, format="%Y-%m-%d"):
+    end_dt = datetime.today()
+    end = end_dt.strftime(format)
+    st_dt = end_dt - timedelta(days=period)
+    st = st_dt.strftime(format)
+    return [st, end]
+
 
 
 

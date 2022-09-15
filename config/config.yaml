@@ -43,7 +43,34 @@ mainInit:
   period_days : 365*2
   time_format : "%Y-%m-%d"
   duration: 720 # 2 years
-  duration_theme: 30
+
+
+searchTheme:
+  market_leader:
+    params:
+      threshold_close: 10000
+      threshold_finance_score: 65   # 경험상 신뢰도 높음. 타이트 하게 설정해도 됨
+      threshold_max_change: 5 # 등락륲 제한선 (너무 튀는건 관심 없음). 하한은 코스피 상회로 default
+      volumecost_code_count: 500  ## 거래대금 순위 ( 이후에 등락률로 순위)
+    config:
+      data_period : 7 ## days
+      chart_period : 1000 ## days
+      log_off: False
+  theme_upjong:
+    params:
+      threshold_close: 10000
+      theme_summary_cutoff:
+        - 0
+        - 20
+      period: 30
+
+    config:
+      save_stock_data: True
+      save_stock_chart: True
+      display_theme_chart: False
+      display_stock_chart: False
+
+
 
 
 scoreRule:

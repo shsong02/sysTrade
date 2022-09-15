@@ -191,6 +191,8 @@ class systemTrade:
         except Exception as e:
             print(f"문제되는 URL: {URL}")
             logger.error(e)
+            df_tot = pd.DataFrame()
+
 
         ## 새로운 df 생성 - score 저장
         new_cols = []
@@ -509,7 +511,8 @@ class systemTrade:
             df_fin  = df_stocks.join(df_stocks_state)
 
             ## 재무제표 조건에 만족하지 못하는 종목들은 제거
-            df_step2 = df_fin
+            df_step2 = df_fin.sort_values(by='total_score', ascending=False)
+            df_step2.drop(['Symbol', 'Representative', 'Region',], axis=1, inplace=True)
             # df_step2 = df_fin[df_fin.score_drop == False]
 
             ## 시간 총액별 그룹을 나눈다. (그룹별 대응 방법이 달라질 수 있음)
@@ -548,7 +551,7 @@ class systemTrade:
         cnt = 0
         duration = self.param_init['duration']
         df = df_step2.sort_values(by='total_score', ascending=False)
-        for name, code in zip(df.index, df.Symbol):
+        for name, code in zip(df.index, df.code):
             code = str(code).zfill(6)
 
             ## 기본 주가 정보
@@ -556,7 +559,7 @@ class systemTrade:
             end = end_dt.strftime(self.param_init["time_format"])
             st_dt = end_dt - timedelta(days=duration)
             st = st_dt.strftime(self.param_init["time_format"])
-            df_chart = fdr.DataReader(code, st, end)
+            # df_chart = fdr.DataReader(code, st, end)
 
             ## advanced 정보 (일자별 PER, ..)
             df_chart2 = stock.get_market_fundamental(st.replace("-",""), end.replace("-",""), code, freq='d')
