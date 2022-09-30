@@ -4,5 +4,7 @@
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/marcap" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/models/kpfbert" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/kis" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/open-trading-api" vcs="Git" />
   </component>
 </project>

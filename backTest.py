@@ -1,170 +1,53 @@
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
-
 import datetime  # For datetime objects
 import os.path  # To manage paths
 import sys  # To find out the script name (in argv[0])
 import pandas as pd
 import datetime
 
-# Import the backtrader platform
-import backtrader as bt
+from backtesting import Backtest, Strategy
+from backtesting.lib import crossover
 
+from backtesting.test import SMA, GOOG
 
 # Create a Stratey
-class TestStrategy(bt.Strategy):
-    params = (
-        ('maperiod', 15),
-    )
+class TestStrategy(Strategy):
+    n1 = 20
+    n2 = 60
 
-    def log(self, txt, dt=None):
-        ''' Logging function fot this strategy'''
-        dt = dt or self.datas[0].datetime.date(0)
-        print('%s, %s' % (dt.isoformat(), txt))
+    def init(self):
+        price = df['Close'].values
+        self.sigbuy = df['rsiBuy'].values
+        self.sigsell = df['rsiSell'].values
 
-    def __init__(self):
-        # Keep a reference to the "close" line in the data[0] dataseries
-        self.dataclose = self.datas[0].close
+        self.pos1 = self.I(self.buy_pos, self.sigbuy)
+        self.pos2 = self.I(self.sell_pos, self.sigsell)
 
-        # To keep track of pending orders and buy price/commission
-        self.order = None
-        self.buyprice = None
-        self.buycomm = None
 
-        # Add a MovingAverageSimple indicator
-        self.sma = bt.indicators.SimpleMovingAverage(
-            self.datas[0], period=self.params.maperiod)
+    def buy_pos(self, pos):
+        return pd.Series(pos)
 
-        # Indicators for the plotting show
-        bt.indicators.ExponentialMovingAverage(self.datas[0], period=25)
-        bt.indicators.WeightedMovingAverage(self.datas[0], period=25,
-                                            subplot=True)
-        bt.indicators.StochasticSlow(self.datas[0])
-        bt.indicators.MACDHisto(self.datas[0])
-        rsi = bt.indicators.RSI(self.datas[0])
-        bt.indicators.SmoothedMovingAverage(rsi, period=10)
-        bt.indicators.ATR(self.datas[0], plot=False)
+    def sell_pos(self, pos):
+        return pd.Series(pos)
 
-    def notify_order(self, order):
-        if order.status in [order.Submitted, order.Accepted]:
-            # Buy/Sell order submitted/accepted to/by broker - Nothing to do
-            return
-
-        # Check if an order has been completed
-        # Attention: broker could reject order if not enough cash
-        if order.status in [order.Completed]:
-            if order.isbuy():
-                self.log(
-                    'BUY EXECUTED, Price: %.2f, Cost: %.2f, Comm %.2f' %
-                    (order.executed.price,
-                     order.executed.value,
-                     order.executed.comm))
-
-                self.buyprice = order.executed.price
-                self.buycomm = order.executed.comm
-            else:  # Sell
-                self.log('SELL EXECUTED, Price: %.2f, Cost: %.2f, Comm %.2f' %
-                         (order.executed.price,
-                          order.executed.value,
-                          order.executed.comm))
-
-            self.bar_executed = len(self)
-
-        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.log('Order Canceled/Margin/Rejected')
-
-        # Write down: no pending order
-        self.order = None
-
-    def notify_trade(self, trade):
-        if not trade.isclosed:
-            return
-
-        self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
-                 (trade.pnl, trade.pnlcomm))
 
     def next(self):
-        # Simply log the closing price of the series from the reference
-        self.log('Close, %.2f' % self.dataclose[0])
+        if self.pos1[-1] == True:
+            self.buy()
+        if self.pos2[-1] == True:
+            # self.position.close()
+            self.sell()
 
-        # Check if an order is pending ... if yes, we cannot send a 2nd one
-        if self.order:
-            return
 
-        # Check if we are in the market
-        if not self.position:
 
-            # Not yet ... we MIGHT BUY if ...
-            if self.dataclose[0] > self.sma[0]:
-
-                # BUY, BUY, BUY!!! (with all possible default parameters)
-                self.log('BUY CREATE, %.2f' % self.dataclose[0])
-
-                # Keep track of the created order to avoid a 2nd order
-                self.order = self.buy()
-
-        else:
-
-            if self.dataclose[0] < self.sma[0]:
-                # SELL, SELL, SELL!!! (with all possible default parameters)
-                self.log('SELL CREATE, %.2f' % self.dataclose[0])
-
-                # Keep track of the created order to avoid a 2nd order
-                self.order = self.sell()
 
 
 if __name__ == '__main__':
-    # Create a cerebro entity
-    cerebro = bt.Cerebro()
+    df = pd.read_csv('test.csv')
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index(['Date'], drop=True, inplace=True)
 
-    # Add a strategy
-    cerebro.addstrategy(TestStrategy)
+    bt = Backtest(df, TestStrategy, commission=.015, cash=10000000, exclusive_orders=True)
 
-    # Datas are in a subfolder of the samples. Need to find where the script is
-    # because it could have been called from anywhere
-    modpath = os.path.dirname(os.path.abspath(sys.argv[0]))
-    datapath = os.path.join(modpath, './data/stock_data/stock_data_352820_2022-02-16_2022-08-15.csv')
-    df = pd.read_csv(datapath)
-
-    ## 포멧 변경하기
-    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
-    df= df.rename(columns={'Date':'datetime', 'Change':'openinterest'})
-    df = df.set_index('datetime')
-
-
-    data = bt.feeds.PandasData(dataname=df )
-
-
-    # Create a Data Feed
-    # data = bt.feeds.YahooFinanceCSVData(
-    #     dataname=datapath,
-    #     # Do not pass values before this date
-    #     fromdate=datetime.datetime(2000, 1, 1),
-    #     # Do not pass values before this date
-    #     todate=datetime.datetime(2000, 12, 31),
-    #     # Do not pass values after this date
-    #     reverse=False)
-
-    # Add the Data Feed to Cerebro
-    cerebro.adddata(data)
-
-    # Set our desired cash start
-    cerebro.broker.setcash(1000.0)
-
-    # Add a FixedSize sizer according to the stake
-    cerebro.addsizer(bt.sizers.FixedSize, stake=10)
-
-    # Set the commission
-    cerebro.broker.setcommission(commission=0.0)
-
-    # Print out the starting conditions
-    print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-    # Run over everything
-    cerebro.run()
-
-    # Print out the final result
-    print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-    # Plot the result
-    cerebro.plot()
+    stats = bt.run()
+    bt.plot()
+    print(stats)

@@ -1,0 +1,21 @@
+my_app: "PSNEmjvaTzEmmyekblwh6Oq87Nhf121jDuPz"
+my_sec: "YWVFwnfdaZIfitjzdCPh9f1Hut/9NqX5eUyXCwxHNsqYUlVLRdPcKNBE2nM4YUQ/yFxM4UjZf5MvmhOADap7HSYE5zhtWKhtNsITmW+mvM3uRfoC45NMymILYWCA8Fm1s9v2ea0Z6l0XBNu8815nBBoxdz1OD8tnQ1se44GciLVI9nAslrc="
+paper_app: "PSVCw7u0QICOsx3PuxDj6ulIB7nY00KVkeZT"  # 모의투자용
+paper_sec: "GQjvBkWweJuheghjsa+IzYZt4qz+3E8RBN609YbqwpdcszUvHIkGAtlqv7DSfN6JDB3zNyBCgSnXLdoZ+BMQFk9rKewkMFc0B8K0OmqIiHv8hIVgmsTeb8VLTq6tx9isbUOWtARnxPinNiMiEbq0eiAEmf+YkfGSXZJZi3ma09LRokMKN2Y="
+my_acct_stock: "63537833"
+my_acct_future: "63537833"  ## 계좌 -03 에 의미를 모르겠음
+my_paper_stock: "50070961"
+my_paper_future: "50070961"
+
+
+# User Agent
+#my_agent: "'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36"
+my_agent: ""
+
+
+
+#domain info
+prod: "https://openapi.koreainvestment.com:9443" #서비스
+ops: "ws://ops.koreainvestment.com:21000" #웹소켓
+vps: "https://openapivts.koreainvestment.com:29443" #모의투자서비스
+vops: "ws://ops.koreainvestment.com:31000" #모의투자웹소켓

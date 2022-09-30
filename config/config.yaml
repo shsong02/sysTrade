@@ -12,8 +12,8 @@ fileControl:
   stock_theme:
     path: "./data/theme/"
     name: ""
-  selected_items:
-    path: "./data/selected_items/"
+  finance_score:
+    path: "./data/finance_score/"
     name: ""
   models:
     path: "./data/models/"
@@ -25,6 +25,9 @@ fileControl:
     keywords:
       path: "./data/model_results/keywords/"
       name: "종목별_업종정보_20220902.csv"
+
+scheduler:
+
 
 ## main 설정값
 mainInit:
@@ -44,18 +47,81 @@ mainInit:
   time_format : "%Y-%m-%d"
   duration: 720 # 2 years
 
+  telegram_token : "5510421912:AAFAyaFdiqgnZ6SsKbhVJLFHBVZKXT9I1yM"
+  telegram_id : "5484958882"
 
-searchTheme:
+
+searchStock:
+  mode: 'market_leader'   ## market_leader, theme, upjong
   market_leader:
-    params:
-      threshold_close: 10000
-      threshold_finance_score: 65   # 경험상 신뢰도 높음. 타이트 하게 설정해도 됨
-      threshold_max_change: 5 # 등락륲 제한선 (너무 튀는건 관심 없음). 하한은 코스피 상회로 default
-      volumecost_code_count: 500  ## 거래대금 순위 ( 이후에 등락률로 순위)
-    config:
-      data_period : 7 ## days
-      chart_period : 1000 ## days
-      log_off: False
+    target: 'from_name'   ## from_krx, from_theme, from_code, from_name,
+    save_image: False
+    from_krx:
+      params:
+        threshold_close: 1000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 30   # 조건2 -  제무재표 스코어
+        threshold_min_trend: -5 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
+        threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
+        threshold_volumecost: 100 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
+        shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
+      config:
+        change_period : 7 ## days  ## 단기 변동폭 확인용
+        trend_period : 60 ## days  ## 상승추세 확인용
+        chart_period : 720 ## days  ## 매물대 시각적 확인용
+
+    from_theme:
+      params:
+        threshold_close: 1000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 50   # 조건2 -  제무재표 스코어
+        threshold_min_trend: 10 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
+        threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
+        threshold_volumecost: 100 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
+        shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
+      config:
+        enable_all: True,  ## 탐색된 theme 에 속한 모든 종목에 대해 검색
+        select_theme: '전지'  ## 검색할 테마 명을 입력 (all=False 일때만 적용)
+
+        change_period : 7 ## days  ## 단기 변동폭 확인용
+        trend_period : 60 ## days  ## 상승추세 확인용
+        chart_period : 720 ## days  ## 매물대 시각적 확인용
+
+    from_upjong:
+      params:
+        threshold_close: 10000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 0   # 조건2 -  제무재표 스코어
+        threshold_min_trend: 5 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
+        threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
+        threshold_volumecost: 100 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
+        shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
+      config:
+        enable_all: True,  ## 탐색된 theme 에 속한 모든 종목에 대해 검색
+        select_upjong: '화장품'  ## 검색할 테마 명을 입력 (all=False 일때만 적용)
+
+        change_period : 7 ## days  ## 단기 변동폭 확인용
+        trend_period : 60 ## days  ## 상승추세 확인용
+        chart_period : 720 ## days  ## 매물대 시각적 확인용
+
+    from_name:
+      params:
+        threshold_close: 1000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 0   # 조건2 -  제무재표 스코어
+        threshold_min_trend: -20 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
+        threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
+        threshold_volumecost: 10 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
+        shortselling_sort_count: 500  # 조건 6 - 거래 회전율 순으로 sorting 및 cutoff
+      config:
+#        select_name: '태광, 비엠티, HB솔루션, 나스미디어, 한솔제지, 하이록코리아, 케어젠, 애경케미칼, DN오토모티브'  ## 검색할 테마 명을 입력 (all=False 일때만 적용)
+        select_name: '현대로템, 나스미디어, HB솔루션, 석경에이티, 네오위즈, 한화에어로스페이스'
+
+        change_period : 7 ## days  ## 단기 변동폭 확인용
+        trend_period : 60 ## days  ## 상승추세 확인용
+        chart_period : 720 ## days  ## 매물대 시각적 확인용
+
+
   theme_upjong:
     params:
       threshold_close: 10000
