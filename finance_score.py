@@ -50,51 +50,12 @@ class financeScore:
             print (e)
 
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
-        pprint.pprint(config)
 
         ## global 변수 선언
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
         self.score_rule = config["scoreRule"]
         self.keys = config["keyList"]
-
-    def stock_list(self, save=True):
-        """종목 코드를 받아 옵니다. (Sector 존재하는 코드만 남겨 둡니다.)
-
-        ex:
-        Symbol	Market	Name	Sector	Industry	ListingDate	SettleMonth	Representative	HomePage	Region
-        60310	KOSDAQ	3S	전자부품 제조업	반도체 웨이퍼 캐리어	2002-04-23	03월	김세완	http://www.3sref.com	서울특별시
-        95570	KOSPI	AJ네트웍스	산업용 기계 및 장비 임대업	렌탈(파렛트, OA장비, 건설장비)	2015-08-21	12월	박대현, 손삼달	http://www.ajnet.co.kr	서울특별시
-
-        Args:
-            save (bool): 파일 저장 여부를 결정
-            file_name (str): 저장할 파일 이름 (경로는 fixed 됨)
-
-        Returns:
-            df_krx (Dataframe): code 번호가 담겨 있는 df (column='Symbol' 로 접근)
-        """
-
-        ## init var
-        file_path = self.file_manager['stock_info']['path']
-        file_name = self.file_manager['stock_info']['name']
-
-        krx = fdr.StockListing('KRX')
-
-        df_krx = krx.dropna(axis=0, subset=['Sector'])  ## 섹터값없는 코드 삭제 (ETF...)
-        df_krx.reset_index(drop=True, inplace=True)
-
-        if save == True:
-            ## 파일로 저장 합니다.
-            stu.file_save(df_krx, file_path, file_name, replace=True)
-
-        return df_krx
-
-    def access_dart(self, code):
-        key = self.keys["dart"]["key"]
-
-        dart = OpenDartReader(key)
-
-
 
     def finance_state(self, code_name, mode='quarter',
                       select=[['매출액증가율','영업이익증가율','영업이익률','ROE','부채비율'],
@@ -452,10 +413,10 @@ class financeScore:
         ####    STEP1     ####
         ######################
         ## 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
-        if params["ena_step1"] == True:
-            df_stocks = self.stock_list()
-        else:
-            df_stocks = pd.read_csv(files["stock_info"]["path"] + files["stock_info"]["name"], index_col=0)
+        krx = fdr.StockListing('KRX')
+        df_stocks = krx.dropna(axis=0, subset=['Sector'])  ## 섹터값없는 코드 삭제 (ETF...)
+        df_stocks.reset_index(drop=True, inplace=True)
+
 
         def code_zfill(x):
             x_out = str(x).zfill(6)
@@ -590,5 +551,5 @@ if __name__ == "__main__":
 
     ## instance 생성
     config_file = './config/config.yaml'
-    st = systemTrade(config_file)
-    st.run()
+    fs = financeScore(config_file)
+    fs.run()

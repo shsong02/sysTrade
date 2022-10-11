@@ -14,14 +14,18 @@ from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 from pykrx import stock
 
+from backtesting import Backtest
+
 ## plot
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 
 #internal
 from tools.news_crawler import newsCrawler
 from trade_strategy import tradeStrategy
 from tools import st_utils as stu
+from back_test import backTestCustom
 
 ## warning 무시
 import warnings
@@ -54,9 +58,8 @@ class searchStocks :
 
         ## global 변수 선언
         self.file_manager = config["fileControl"]
-        self.param_init = config["mainInit"]
-        self.score_rule = config["scoreRule"]
-        self.keys = config["keyList"]
+        self.init_conifg = config["mainInit"]
+        self.trade_config = config["tradeStock"]
 
         ### 기본 함수 실행 결정
         self.mode = config["searchStock"]["mode"]
@@ -106,10 +109,10 @@ class searchStocks :
             테마 코드를 저장한 파일을 저장합니다.
 
         """
-        ## code 명을 위한 준비
-        a = self.file_manager["stock_info"]
-        stocks = pd.read_csv(a["path"]+a["name"], index_col=0)
-
+        ## 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
+        krx = fdr.StockListing('KRX')
+        stocks = krx.dropna(axis=0, subset=['Sector'])  ## 섹터값없는 코드 삭제 (ETF...)
+        stocks.reset_index(drop=True, inplace=True)
 
         ## 네이버 테마 코드를 받아 옵니다.
         theme_names = []
@@ -187,9 +190,9 @@ class searchStocks :
             ## 여러 코드의 데이터 가져오기
             duration = self.params["period"]
             end_dt = datetime.today()
-            end = end_dt.strftime(self.param_init["time_format"])
+            end = end_dt.strftime(self.init_conifg["time_format"])
             st_dt = end_dt - timedelta(days=duration)
-            st = st_dt.strftime(self.param_init["time_format"])
+            st = st_dt.strftime(self.init_conifg["time_format"])
 
             df_list = [fdr.DataReader(code, st, end)[['Close', 'Volume']] for code in codes]
             if len(df_list) == 0 :   ## 종목들이 전부 1만원을 넘지 못해서 하나도 남지 않는 경우
@@ -314,9 +317,9 @@ class searchStocks :
                 file_name = f"{theme_name}.png"
                 file_name = file_name.replace("/","_")
                 if mode == 'theme':
-                    file_path = self.file_manager["stock_theme"]["path"] + f"theme/img_codes/{st}_{end}/"
+                    file_path = self.file_manager["search_stocks"]["path"] + f"theme/img_codes/{st}_{end}/"
                 else:
-                    file_path = self.file_manager["stock_theme"]["path"] + f"upjong/img_codes/{st}_{end}/"
+                    file_path = self.file_manager["search_stocks"]["path"] + f"upjong/img_codes/{st}_{end}/"
                 ## 폴더 생성
                 try:
                     if not os.path.exists(file_path):
@@ -334,9 +337,9 @@ class searchStocks :
                 file_name = f"{theme_name}.csv"
                 file_name = file_name.replace("/","_")
                 if mode == 'theme':
-                    file_path = self.file_manager["stock_theme"]["path"] + f"theme/raw/{st}_{end}/"
+                    file_path = self.file_manager["search_stocks"]["path"] + f"theme/raw/{st}_{end}/"
                 else:
-                    file_path = self.file_manager["stock_theme"]["path"] + f"upjong/raw/{st}_{end}/"
+                    file_path = self.file_manager["search_stocks"]["path"] + f"upjong/raw/{st}_{end}/"
 
                 ## 파일로 저장 합니다.
                 stu.file_save(df_data, file_path, file_name, replace=False)
@@ -346,7 +349,6 @@ class searchStocks :
                 # keys = '유신'
                 nc = newsCrawler()
                 nc.search_keyword(keys)
-                print("SSH")
             # time.sleep(5)
 
             print(f"테마/업종 ({theme_name}) 종목 리스트: {names2} ")
@@ -368,7 +370,7 @@ class searchStocks :
             df_summary[col] =  val
 
         file_name = f"{mode}_stockList_{st}_{end}.csv"
-        file_path = self.file_manager["stock_theme"]["path"]
+        file_path = self.file_manager["search_stocks"]["path"]
         ## 폴더 생성
         try:
             if not os.path.exists(file_path):
@@ -409,7 +411,7 @@ class searchStocks :
 
         ## 테마/업종 전체에서 비교하는 이미지 파일 저장 (필수)
         file_name = f"{mode}_summary_{st}_{end}.png"
-        file_path = self.file_manager["stock_theme"]["path"] + f'{mode}/summary/{st}_{end}/'
+        file_path = self.file_manager["search_stocks"]["path"] + f'{mode}/summary/{st}_{end}/'
         ## 폴더 생성
         try:
             if not os.path.exists(file_path):
@@ -440,8 +442,8 @@ class searchStocks :
         '''
 
         ## 공통
-        path = self.file_manager["stock_theme"]["path"]
-        format = self.param_init["time_format"]
+        path = self.file_manager["search_stocks"]["path"]
+        format = self.init_conifg["time_format"]
         df_theme = stu.load_theme_list(path, mode='theme', format=format)
         df_upjong = stu.load_theme_list(path, mode='upjong', format=format)
 
@@ -515,15 +517,15 @@ class searchStocks :
 
         # for 문을 위한 설정 정보들
         config_file = './config/config.yaml'
-        chart = tradeStrategy(config_file)
+        strategy = tradeStrategy(config_file)
         dates = stu.period_to_str(self.config["chart_period"], format="%Y%m%d")
         nc = newsCrawler()
 
-        buy_code = []
+        buy_dict = dict()
         buy_name = []
         for cnt, (code, name) in enumerate(zip(df_fin.Code, df_fin.index)):
-            if cnt >15:
-                print("SSH TEST")
+            # if cnt >15:
+            #     print("SSH TEST")
 
             if not len(df_theme) == 0 :
                 df_cur_theme = df_theme[df_theme.Name == name]
@@ -565,20 +567,84 @@ class searchStocks :
                 print(f"Code: {code:<8}, name: {name:<15}, score: None -- 스코어를 찾을 수 없습니다.")
 
             # logger.info(f"종목 ({name} - {code}) 의 등락율 차트를 생성합니다.")
-            df = chart.run(code, name=name, dates=dates, data='none')
+            df_ohlcv = strategy.run(code, name=name, dates=dates, data='none', mode='daily')
+
+            ## backtest 진행
+            # df_ohlcv.finalSell = False
+            # bt = Backtest(df_ohlcv, backTestCustom, commission=.015, cash=10000000, exclusive_orders=False)
+            #
+            # stats = bt.run()
+            # bt.plot()
+            # print(stats)
 
             ## 한달동안 매수 신호가 발생한 종목 수집하기
-            period = 30
-            if any(df.tail(period).finalBuy.to_list()):
-                buy_code.append(code)
+            if any(df_ohlcv.tail(self.trade_config["buy_condition"]["codepick_buy_holdday"]).finalBuy.to_list()):
                 buy_name.append(name)
+                buy_dict[name] = dict()
+                buy_dict[name]['code'] = code
+                last_d = df_ohlcv[df_ohlcv.finalBuy == True]['finalBuy'].index.to_list()[-1]
+                hold_d = datetime.today() - last_d
+                buy_dict[name]['buy_day'] = last_d
+                buy_dict[name]['buy_hold_day'] = hold_d
 
 
 
-        for code, name in zip(buy_code, buy_name):
-            logger.info(f"최근 ({period}) 일 중에 구매 신호가 확인된 종목 ({name})-({code}) 입니다.")
-        logger.info(buy_name)
+
+        ## 매수 조건이 발생한 종목을 저장 하기
+        logger.info(f"\n매수 조건을 만족한 종목을 저장합니다.")
+        df_buy = df_fin.loc[buy_name]
+        cols = ["Code", "total_score", "VolumeCost", "Sector", "Industry", "VolumeTurnOver", "Change", "ChangeMid"]
+        df_buy = df_buy.loc[:,cols]
+
+        ## 파일 저장합니다.
+        self._make_buy_list(df_buy, buy_dict)
+
+
         logger.info("Finish!")
+
+    ######################################################
+    ######    Internal Func.
+    ######################################################
+    def _make_buy_list(self, df, buy_dict):
+        # 시작 시점에 시간 체크
+        today = datetime.today()
+
+        # 중기, 단기 기간 값 추가, buy 날짜, buy 지연 날짜,
+        [st, end] = stu.period_to_str(self.config["change_period"])
+        change_period = f"{st} ~ {end}"
+        [st, end] = stu.period_to_str(self.config["trend_period"])
+        trend_period = f"{st} ~ {end}"
+
+        df["change_period"] = change_period
+        df["trend_period"] = trend_period
+        df["select_mode"] = self.target
+        df["buy_day"] = 0
+        df["buy_hold_day"] = 0
+        for name, value in buy_dict.items():
+            df.loc[name, "buy_day"] = value["buy_day"]
+            df.loc[name, "buy_hold_day"] = value["buy_hold_day"]
+        df.sort_values(by='buy_hold_day', inplace=True)
+        for name in df.index:
+            last_d = str(df.at[name,'buy_day'])
+            hold_d = str(df.at[name,'buy_hold_day'])
+            logger.info(f"종목명 (매수조건 만족) :{name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d} ")
+
+        ## 폴더 생성
+        base_path = self.file_manager["monitor_stocks"]["path"]
+        path = f"year={today.strftime('%Y')}/month={today.strftime('%m')}/day={today.strftime('%d')}/time={today.strftime('%H%M')}/"
+
+        stu.file_save(df, file_path=base_path+path, file_name=f"buy_list_{today.strftime('%Y%m%d_%H%M%S')}.csv")
+
+        # 차트 이미지 저장.
+        ## 매수 종목만 그림 파일 저장합니다.
+        st = tradeStrategy('./config/config.yaml')
+        st.display = 'save'
+        dates = stu.period_to_str(self.config["chart_period"], format="%Y%m%d")
+        for name, code in zip(df.index, df.Code):
+            st.path = base_path+path + "chart/"
+            st.name = f"{name}_{code}.png"
+            st.run(code, name=name, dates=dates, data='none', mode='daily')
+
 
     def condition_check(self, df=pd.DataFrame(), name_list=[],):
         [st, end] = stu.period_to_str(self.config["change_period"])

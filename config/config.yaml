@@ -1,19 +1,21 @@
 #
 fileControl:
-  news:
-    path: "./datda/news/"
+  search_stocks:
+    path: "./data/search_stocks/"
     name: ""
-  stock_info:
-    path: "./data/stock_info/"
-    name: "stock_list.csv"
-  stock_data:
-    path: "./data/stock_data/"
-    name: ""
-  stock_theme:
-    path: "./data/theme/"
+  monitor_stocks:
+    path: "./data/monitor_stocks/"
     name: ""
   finance_score:
     path: "./data/finance_score/"
+    name: ""
+  system_trade:
+    path: "./data/system_trade/"
+    name: ""
+
+  ## tools 용
+  news:
+    path: "./datda/news/"
     name: ""
   models:
     path: "./data/models/"
@@ -26,15 +28,10 @@ fileControl:
       path: "./data/model_results/keywords/"
       name: "종목별_업종정보_20220902.csv"
 
-scheduler:
-
-
 ## main 설정값
 mainInit:
   enable_test: False
 
-  ## step1 진행 여부ㅓ
-  ena_step1: False
   ## step2 진행 여부
   ena_step2: True
 
@@ -50,25 +47,36 @@ mainInit:
   telegram_token : "5510421912:AAFAyaFdiqgnZ6SsKbhVJLFHBVZKXT9I1yM"
   telegram_id : "5484958882"
 
+tradeStock:
+  buy_condition:
+    codepick_buy_holdday: 40 # days
+    timepick_trend_period: "ma60" # ma20, ma40 or ma60
+    timepick_trend_change: -1 # unit: percentage  (2주간 상승률)
+  sell_condition:
+    default_profit_change: 10 # unit: percentage
+    default_holding_days: 30 # unit: days
+  scheduler:
+    mode: "real"
+    interval: 10  # unit: min.
 
 searchStock:
   mode: 'market_leader'   ## market_leader, theme, upjong
   market_leader:
-    target: 'from_name'   ## from_krx, from_theme, from_code, from_name,
-    save_image: False
+    target: 'from_krx'   ## from_krx, from_theme, from_code, from_name,
+    display_chart: 'on'  ## on, off, save,
     from_krx:
       params:
-        threshold_close: 1000  # 조건1 - 종가 최소 금액
-        threshold_finance_score: 30   # 조건2 -  제무재표 스코어
-        threshold_min_trend: -5 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_close: 10000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 60   # 조건2 -  제무재표 스코어
+        threshold_min_trend: 0 # (unit: %). 조건3 - trend period 기간 동안 등락률
         threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
         threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
-        threshold_volumecost: 100 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
+        threshold_volumecost: 5 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
         shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
       config:
         change_period : 7 ## days  ## 단기 변동폭 확인용
         trend_period : 60 ## days  ## 상승추세 확인용
-        chart_period : 720 ## days  ## 매물대 시각적 확인용
+        chart_period : 1200 ## days  ## 매물대 시각적 확인용
 
     from_theme:
       params:

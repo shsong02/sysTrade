@@ -3,6 +3,8 @@ import requests
 import json
 import pandas as pd
 import os
+import time
+from glob import glob
 from datetime import datetime, date, timedelta
 
 ## scheduler
@@ -29,7 +31,9 @@ except Exception as e :
 ####    로그 생성    #######
 logger = stu.create_logger()
 
-_DEBUG = True
+_DEBUG = False
+_DEBUG_NEWDATA = False
+
 
 class systemTrade:
 
@@ -50,9 +54,11 @@ class systemTrade:
         ## global 변수 선언
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
-        self.score_rule = config["scoreRule"]
-        self.keys = config["keyList"]
+        self.trade_config = config["tradeStock"]
 
+        ##### 초기 변수 설정
+        ## 스케쥴링 하기 위해서 시간 간격을 생성
+        self.mon_intv = self.trade_config["scheduler"]["interval"]  # minutes  (max 30 min.)
 
 
         ## 거래에 필요한 kis config 파일 읽어와서 계정 관련 설정
@@ -73,15 +79,68 @@ class systemTrade:
         self._access_token()  ## self.access_token 생성
 
 
+
+
     def _access_token(self):
-        ## 보안인증키 받기
-        url = f"{self.url_base}/oauth2/tokenP"
-        headers = {"content-type": "application/json"}
-        body = {"grant_type": "client_credentials",
-                "appkey": self.app_key,
-                "appsecret": self.app_secret}
-        res = requests.post(url, headers=headers, data=json.dumps(body))
-        self.access_token = res.json()["access_token"]
+        ## 파일로 저장. (24시간만 유지)
+        format = "%Y%m%d-%H%M%S"
+        currtime = datetime.now()
+        currtimestr = currtime.strftime(format=format)
+        path = self.file_manager["monitor_stocks"]["path"]
+
+        ## 없으면 폴더 생성
+        try:
+            if not os.path.exists(path):
+                os.makedirs(path)
+        except Exception as e:
+            raise e
+
+        ## 파일 존재 여부 확인
+        filelist = os.listdir(path)
+        chk1 = False  ## 파일 존재 여부 확인
+        chk2 = False  ## 24시간 초과 확인
+        for file in filelist:
+            if "kis-token" in file:
+                n, ext = os.path.splitext(file)
+                filetime = n.split("_")[-1]
+                time = datetime.strptime(filetime, format)
+                time_add1day = time + timedelta(days=1)
+
+                if time_add1day < currtime:
+                    # print(time_add1day, currtime)
+                    os.remove(path+file)
+                    chk2 = True #
+                else:
+                    print(time_add1day, currtime)
+                    with open(path + file, 'r') as f:
+                        self.access_token = json.load(f)
+                    logger.info(f"한국투자증권 API 용 토큰이 존재하므로 파일 로드 합니다. (파일명: {path + file}) ")
+
+                chk1 = True  ## 파일이 일단 존재함
+                break
+
+        if (chk1 == False)  or (chk2==True) :
+            name = f"kis-token_{currtimestr}.json"
+            if chk2 == True :
+                logger.info(f"한국투자증권 API 용 토큰이 날짜 초과(24시간) 하여 새로 생성 및 파일 저장합니다.. (파일명: {path + name}) ")
+            else:
+                logger.info(f"한국투자증권 API 용 토큰이 존재하지 않기 때문에 파일 저장합니다 . (파일명: {path+name}) ")
+
+
+            # 신규 생성 : 보안인증키 받기
+            url = f"{self.url_base}/oauth2/tokenP"
+            headers = {"content-type": "application/json"}
+            body = {"grant_type": "client_credentials",
+                    "appkey": self.app_key,
+                    "appsecret": self.app_secret}
+            res = requests.post(url, headers=headers, data=json.dumps(body))
+            self.access_token = res.json()["access_token"]
+
+            with open(path+name, 'w') as f:
+                json.dump(self.access_token, f)
+
+
+
 
     def hashkey(self, datas):
         path = "uapi/hashkey"
@@ -483,88 +542,262 @@ class systemTrade:
         else:
             raise ValueError(f"지원하지 않는 tr_id={tr_id} 입니다")
 
-
         return df
 
 
+    def run(self):
+
+        ## 실제 시간 확인하여 웨이팅하기
+        if self.trade_config["scheduler"]["mode"] == "real":
+            while True:
+                real_time = datetime.now().time().strftime("%H%M%S")
+                if real_time >= "091000":
+                    break
+
+                print(f"현재시간 ({real_time}) 이 목표시간 (091000) 에 도달하지 못했기 때문에 기다립니다.")
+                time.sleep(60)
+
+        ## Monitoring 종목 가져오기
+        path = self.file_manager["monitor_stocks"]["path"]
+        flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
+
+        ## 시간 포멧이 일정하기 때문에 str 비교로도 가장 최근을 선택할 수 있음
+        nstr = ''
+        for f in flist:
+            if f > nstr:
+                # print(f)
+                nstr = f
+
+        ## 탐색할 종목명 확인
+        df = pd.read_csv(nstr)
+        codes0 = df.Code.to_list()
+        codes = [str(x).zfill(6) for x in codes0]
+        df_dict = dict()
+        for code in codes:
+            df_dict[code] = dict()
+            df_dict[code]['data'] = pd.DataFrame()
+
+        ## KIS API 자주 사용 시, locking 됨. 테스트 버전은 최대한 재사용 하여 접속양을 줄인다.
+        base_path = self.file_manager["system_trade"]["path"]
+
+        if _DEBUG != True :
+            ## 현 시점이 장 시작 전이면 초기 데이터를 만들어 놓기 시작합니다.
+            now_str = datetime.now().time().strftime("%H%M%S")
+            now = datetime.now()
+            time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
+            if '090010' <= now_str:
+                for code in codes:
+                    times = ["090000", now_str]
+                    df_fin = self._make_curr_df(code, times)
+                    df_dict[code]['data'] = df_fin
+                    logger.info(f"장 시작 9시 이후에 시작되었기 때문에 시간({times} 에 대한 종목({code}) 실시간 정보를 미리 준비합니다.)")
+
+                    name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
+                    stu.file_save(df_fin, file_path=base_path+time_path, file_name=f"{name}_{code}.csv", replace=False)
+        else:  ## 최신 데이터로 로드해오기.
+            if _DEBUG_NEWDATA:
+                now = datetime.now()
+                time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
+                for code in codes:
+                    times = ["090000", "153000"]
+                    df_fin = self._make_curr_df(code, times)
+                    df_dict[code]['data'] = df_fin
+                    logger.info(f"장 시작 9시 이후에 시작되었기 때문에 시간({times} 에 대한 종목({code}) 실시간 정보를 미리 준비합니다.)")
+                    name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
+                    stu.file_save(df_fin, file_path=base_path + time_path, file_name=f"{name}_{code}.csv", replace=False)
+            else:
+                dlist = glob(base_path + "*/*/*/*/")  ## 년/월/일/시간/*.csv
+                dfin = ''
+                for d in dlist:
+                    if d > dfin:
+                        dfin = d  ## 최신 폴더 찾아내기
+
+                print(f"디버그 모드 사용 중입니다. KIS API 사용 최쇠화를 위해 최신 current 데이터를 csv 로 부터 읽어 옵니다.(경로: {dfin})")
+                flist = os.listdir(dfin)
+
+                for code in codes:
+                    chk1 = False
+                    for f in flist:
+                        if code in f:  ## 파일명이 종목 코드 이므로,
+                            df =stu.file_load(file_path=dfin, file_name=f, type='csv')
+                            df.index = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M:%S')
+                            df_dict[code]["data"] = df
+                            chk1 = True
+                            break
+                    if not chk1:
+                        raise ValueError(f"[Debug 모드] 종목코드({code}) 관련 Dataframe 을 찾을 수 없습니다. (경로:{dfin})")
+
+        ## chart 로 표시하기
+        cm = tradeStrategy('./config/config.yaml')
+        cm.display = 'save'  ## 파일로 차트 저장하기
+        day_tlist = self._make_time_list(["090000", "153000"], interval=self.mon_intv)
+        times = [0, 0]  ## st, end
+        now_time = datetime.now().time().strftime("%H%M%S")
+        chart_base_path = self.file_manager["system_trade"]["path"] + "chart/"
+        today = datetime.now().date().strftime("%Y%m%d")
+
+
+        if (now_time > '153000'):
+            ## 저장할 경로 확인
+            now = datetime.now()
+            time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+            image_path = chart_base_path + time_path
+            cm.path = image_path
+
+            for code in codes:
+                df_acc = df_dict[code]['data']  ## 이미 앞에서 모두 준비된 상태
+                df_acc = df_acc.fillna(0)  ## missing 처리
+                df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
+                name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
+                image_name = f"{name}_{code}.png"
+                cm.name = image_name
+                print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
+                df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+
+                ## 파일로도 저장
+                stu.file_save(df_acc, file_path=base_path + time_path, file_name=f"{code}.csv", replace=False)
+        else:
+            for idx, t in enumerate(day_tlist[:-1]):
+                times.append(t)
+                times.pop(0)
+
+                ## 저장할 경로 확인
+                now = datetime.today()
+                time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
+                image_path = chart_base_path + time_path
+                cm.path = image_path
+
+                if t < now_time:
+                    ## 시작 시간이 장 시작 후 일 경우 처리
+                    pass
+                else:
+                    if idx == 0:
+                        ## 0900 는 실행 하지 않음
+                        pass
+                    else:
+
+                        for code in codes:
+
+                            df_fin = self._make_curr_df(code, times)
+                            df_acc = df_dict[code]['data']
+
+                            if len(df_acc) == 0:
+                                df_acc = df_fin
+                            else:
+                                df_acc = pd.concat([df_acc, df_fin])
+
+                            df_acc = df_acc.fillna(0)  ## missing 처리
+                            df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
+
+                            name = stock.get_market_ticker_name(code)
+                            image_name = f"{name}_{code}.png"
+                            cm.name = image_name
+                            if len(df_acc) != 0:
+                                try:
+                                    print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
+                                    df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+
+                                    ## 다음 사용을 위해 데이터 저장
+                                    df_dict[code]['data'] = df_acc
+
+                                    ## csv 파일로도 저장
+                                    stu.file_save(df_ohlcv, file_path=base_path + time_path,
+                                                  file_name=f"{name}_{code}.csv", replace=False)
+                                except Exception as e :
+                                    print(e)
+
+                                # 매수 조건이 발생하였는지 확인 (텔레그림..발생)
+                                ## 조건1: 채결 강도가 100 을 넘었을 경우, 차트로 알려주기
+                                cstrth = float(df_ohlcv.tail(1).ChegyeolStr)
+                                close0 = int(df_ohlcv.head(1).Close)
+                                close1 = int(df_ohlcv.tail(1).Close)
+                                change = self._change_ratio(close1, close0)
+
+                                df_chg = self._bollinger_chegyeol(df_ohlcv) # param 은 기본으로 사용
+                                ch_sig = df_chg.tail(self.mon_intv).bolBuy_chegyeol.any()
+                                # ch_sig = df_chegyeol.bolBuy_chegyeol.any()
+                                # print(name, ch_sig, df_chegyeol.bol_upper_chegyeol.to_list() )
+                                if ch_sig :
+                                    df_chg = df_chg.tail(self.mon_intv)
+                                    idx_list = df_chg[df_chg.bolBuy_chegyeol == True].index.to_list()
+                                    del_str = datetime.now().date().strftime("%Y-%m-%d ")
+                                    idx_list2 = [str(x) for x in idx_list]
+                                    idx_list2 = [x.replace(del_str, '') for x in idx_list2]
+                                    _msg = f"현재 ({str(now)}) 종목 ({name}) 의 채결 강도가 급하게 상승한 구간이 최근 10분 내 존재합니다. (시점: {idx_list2}) "
+                                    print(_msg)
+                                    stu.send_telegram_message(config=self.param_init, message=_msg)
+                                    stu.send_telegram_message(config=self.param_init, message=f"현재 등락률은 {change}% 입니다.(장전 갭상은 반영 못함)")
+                                    stu.send_telegram_image(config=self.param_init, image_name_path=image_path+image_name)
+                            else:
+                                print("SSH !!!")
+
+
+                        ## 실제 시간 확인하여 웨이팅하기
+                        while True:
+                            real_time = datetime.now().time().strftime("%H%M%S")
+                            if real_time >= t:
+                                break
+
+                            print(f"현재시간 ({real_time}) 이 목표시간 ({t}) 에 도달하지 못했기 때문에 기다립니다.")
+                            time.sleep(30)
+
+        pass
+
+    #############################
+    #### Internal Func
+    #############################
+    def _make_curr_df(self, code, times):
+        df = self.get_curr_min_price(code, times)
+        df2 = self.get_curr_min_chegyeol(code, times)
+        df3 = self.get_curr_member(code, times)  ## 최종시점 데이터만 가져올수 있음. 실시간으로 가져오도록 해야 함
+        # df4 = tr.get_curr_investor(code, times) ## 실시간 미지원으로 확인되어 사용하지 않음..(추후 까지)
+        df_fin = df.join(df2)  ## time index 로 join 함
+        df_fin = df_fin.join(df3)
+
+        # 타입 변환
+        cols = ["Low", "High", "Close", "Volume", "Open", "ChegyeolStr"]
+        df_fin[cols] = df_fin[cols].apply(pd.to_numeric)
+
+        return df_fin
+
+    def _change_ratio(self, curr, prev):
+        return round((curr - prev) / curr * 100, 2)
+
+
+    def _bollinger_chegyeol(self, df_in, window=20, sigma=2.0):
+        df = df_in.copy()
+        df['bol_mid_chegyeol'] = df['ChegyeolStr'].rolling(window=window).mean()
+        std = df['ChegyeolStr'].rolling(window).std(ddof=0)
+        df['bol_upper_chegyeol'] = df['bol_mid_chegyeol'] + sigma * std
+        df['bol_lower_chegyeol'] = df['bol_mid_chegyeol'] - sigma * std
+
+        df['bolBuy_chegyeol'] = False
+        df['bolSell_chegyeol'] = False
+        df_temp = pd.DataFrame()
+        df_temp = df[df.bol_upper_chegyeol <= df.ChegyeolStr]
+        for idx in df_temp.index.to_list():
+            df.loc[idx, 'bolBuy_chegyeol'] = True  ## 상단 터치를 사는 시점으로 봄 (범위를 짥게 가져감)
+
+        df_temp = df[df.bol_lower_chegyeol >= df.ChegyeolStr]
+        for idx in df_temp.index.to_list():
+            df.loc[idx, 'bolSell_chegyeol'] = True
+
+        return df
 
 
 if __name__ == '__main__':
 
     ## 스케쥴러 설정
-
-
-
-    code = "064350"
-
-    ## 텔레그램 연동 테스트
-    # stu.send_telegram_message(f"test code: {code}")
-    # image = './data/theme/market_leader/20201006_20220926/000060_20201006_20220926.png'
-    # stu.send_telegram_image(image_name_path=image)
+    # sched = BackgroundScheduler
+    # sched.start()
 
     tr = systemTrade(mode='real')
+    tr.run()
 
-    ## 스케쥴링 하기 위해서 시간 간격을 생성
-    interval = 10  # minutes  (max 30 min.)
 
-    st = timedelta(hours=9)
-    now_time = datetime.now().time().strftime("%H%M%S")
-    time_list = []
-    for i in range(int(60 / interval) * 7):  ## 1분 간격
-        if i == 0:
-            t = st
-        else:
-            t = t + timedelta(minutes=interval)
-        str_t = f"{t}".replace(':', '').zfill(6)
-        if str_t < now_time:
-            time_list.append(str_t)
-        else:
-            time_list.append(now_time)
-            break
-
-    times = [0,0]  ## st, end
-    df_acc = pd.DataFrame()
-
-    ## chart 로 표시하기
-    config_file = './config/config.yaml'
-    cm = tradeStrategy(config_file)
-
-    for idx, t in enumerate(time_list):
-        times.append(t)
-        times.pop(0)
-
-        if idx == 0:
-            pass
-        else:
-            df = tr.get_curr_min_price(code, times)
-            df2 =tr.get_curr_min_chegyeol(code, times)
-
-            ## 최종시점 데이터만 가져올수 있음. 실시간으로 가져오도록 해야 함
-            df3 = tr.get_curr_member(code, times)
-
-            ## 실시간 미지원으로 확인되어 사용하지 않음..(추후 까지)
-            # df4 = tr.get_curr_investor(code, times)
-
-            ## time index 로 join 함
-            df_fin = df.join(df2)
-            df_fin = df_fin.join(df3)
-
-            # 타입 변환
-            cols = ["Low", "High", "Close", "Volume", "Open", "ChegyeolStr"]
-            df_fin[cols] = df_fin[cols].apply(pd.to_numeric)
-
-            if len(df_acc) == 0:
-                df_acc = df_fin
-            else:
-                df_acc = pd.concat([df_acc, df_fin])
-
-            if idx > 40 :  ## 시작
-                df_acc = df_acc.fillna(0)  ## missing 처리
-                df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')] # index 중복 제거
-
-                name = stock.get_market_ticker_name(code)
-                today = datetime.now().date().strftime("%Y%m%d")
-                cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
 
 
     #######
@@ -578,6 +811,3 @@ if __name__ == '__main__':
 
     ## 잔액 조회
     # kis.get_buyable_cash()
-
-
-    pass

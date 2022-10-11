@@ -10,16 +10,17 @@ from datetime import datetime, timedelta
 
 
 ###### 설정 파일에서 정보를 읽어서 global 변수로 선언한다.
-## 설정 파일을 필수적으로 한다.
-config_file = '../config/config.yaml'
+
+
+#### logging 설정
 try:
+    config_file = "./config/logging.yaml"
     with open(config_file) as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        log_config = yaml.load(f, Loader=yaml.FullLoader)
 except Exception as e:
     print(e)
-FILE_MANAGER = config["fileControl"]
-PARAM_INIT = config["mainInit"]
 
+#############################################
 
 def create_logger():
     logger = logging.getLogger("sysT")
@@ -28,16 +29,7 @@ def create_logger():
     if len(logger.handlers) > 0 :
         return logger
     else:
-        #### logging 설정
-        try:
-            config_file = "../config/logging.yaml"
-            with open(config_file) as f:
-                config = yaml.load(f, Loader=yaml.FullLoader)
-        except Exception as e:
-            print(e)
-
-
-        logging.config.dictConfig(config)
+        logging.config.dictConfig(log_config)
         # 핸들러 설정된 인스턴스 다시 생성
         logger = logging.getLogger()
 
@@ -147,9 +139,9 @@ def load_theme_list(path, mode='theme', format="%Y-%m-%d"):
 # - Input
 #   1) message : 메세지
 # -----------------------------------------------------------------------------
-def send_telegram_message(message):
-    token  = PARAM_INIT["telegram_token"]
-    id = PARAM_INIT["telegram_id"]
+def send_telegram_message(config, message):
+    token  = config["telegram_token"]
+    id = config["telegram_id"]
 
     try:
         # 텔레그램 메세지 발송
@@ -163,9 +155,9 @@ def send_telegram_message(message):
     except Exception:
         raise
 
-def send_telegram_image(image_name_path):
-    token  = PARAM_INIT["telegram_token"]
-    id = PARAM_INIT["telegram_id"]
+def send_telegram_image(image_name_path, config):
+    token  = config["telegram_token"]
+    id = config["telegram_id"]
 
     try:
         # 텔레그램 메세지 발송
