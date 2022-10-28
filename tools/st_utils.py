@@ -132,6 +132,8 @@ def load_theme_list(path, mode='theme', format="%Y-%m-%d"):
 
     return df_theme
 
+def change_ratio(curr, prev):
+    return round((curr - prev) / curr * 100, 2)
 
 # -----------------------------------------------------------------------------
 # - Name : send_telegram_msg

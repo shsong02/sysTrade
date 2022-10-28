@@ -11,6 +11,11 @@ from datetime import datetime, date, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.base import JobLookupError
 
+## html
+import requests
+from bs4 import BeautifulSoup as Soup
+from selenium import webdriver
+
 ## 한국투자증권 rest 사용하기
 import src.kis.rest.kis_api as kis
 
@@ -56,9 +61,12 @@ class systemTrade:
         self.param_init = config["mainInit"]
         self.trade_config = config["tradeStock"]
 
+        self.trade_kospi = config["tradeStock"]["kospi"]["control"]
+
         ##### 초기 변수 설정
         ## 스케쥴링 하기 위해서 시간 간격을 생성
         self.mon_intv = self.trade_config["scheduler"]["interval"]  # minutes  (max 30 min.)
+        self.trade_target = self.trade_config["scheduler"]["target"]
 
 
         ## 거래에 필요한 kis config 파일 읽어와서 계정 관련 설정
@@ -77,9 +85,6 @@ class systemTrade:
 
 
         self._access_token()  ## self.access_token 생성
-
-
-
 
     def _access_token(self):
         ## 파일로 저장. (24시간만 유지)
@@ -138,9 +143,6 @@ class systemTrade:
 
             with open(path+name, 'w') as f:
                 json.dump(self.access_token, f)
-
-
-
 
     def hashkey(self, datas):
         path = "uapi/hashkey"
@@ -264,7 +266,10 @@ class systemTrade:
         size = []
         for key, df_part in df_grp:
             idx.append(key)
-            str.append(df_part['ChegyeolStr'].iat[-1])
+            str_prev = float(df_part['ChegyeolStr'].iat[-1])
+            if str_prev > 140 :  ## chart 상 보기 불편해서
+                str_prev = 140
+            str.append(str_prev)
             acc.append(df_part['VolumeAcc'].iat[-1])
             size.append(df_part['VolumeSize'].astype(int).sum())
 
@@ -302,8 +307,6 @@ class systemTrade:
 
         ## DF 로 변경
         df = self._make_df(tr_id, data)
-
-
 
     def get_curr_member(self, code, times=[], df_prev=pd.DataFrame()):
         path = "/uapi/domestic-stock/v1/quotations/inquire-member"
@@ -390,7 +393,6 @@ class systemTrade:
         res = requests.get(url, headers=headers, params=params)
         data = res.json()["output2"]
 
-
     def get_inquire_balance(self):
         '''
             - 잔고조회
@@ -425,11 +427,9 @@ class systemTrade:
         res = requests.get(url, headers=headers, params=params)
         data = res.json()["output2"]
 
-
     #############################
     ####   Internal Func.   ####
     #############################
-
     def _make_time_list(self, times, interval=30):
         # st ~ end 가 30분을 초과 할 경우 나눠서 생성
         st = timedelta(hours=int(times[0][0:2]), minutes=int(times[0][2:4]))
@@ -548,16 +548,27 @@ class systemTrade:
     def run(self):
 
         ## 실제 시간 확인하여 웨이팅하기
+        init_time = "094000"  ## ma40 때문인듯 에러가 나서... 일단 40분으로 시간 제약 해둠
         if self.trade_config["scheduler"]["mode"] == "real":
             while True:
                 real_time = datetime.now().time().strftime("%H%M%S")
-                if real_time >= "091000":
+                if real_time >= init_time:  ## bol window 가 20 이라, 최소 index 가 20 이상이어야 함
                     break
 
-                print(f"현재시간 ({real_time}) 이 목표시간 (091000) 에 도달하지 못했기 때문에 기다립니다.")
+                print(f"현재시간 ({real_time}) 이 목표시간 ({init_time}) 에 도달하지 못했기 때문에 기다립니다.")
                 time.sleep(60)
 
-        ## Monitoring 종목 가져오기
+        ######################################
+        ####     시간 정보는 여기서 한번에 처리
+        ######################################
+        now = datetime.now()
+        now_str = now.time().strftime("%H:%M:%S")
+        _msg = f"{now_str} 시에 프로그램 실행합니다."
+        stu.send_telegram_message(config=self.param_init, message=_msg)
+
+        ################################
+        ####     Monitoring 종목 가져오기
+        ################################
         path = self.file_manager["monitor_stocks"]["path"]
         flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
 
@@ -565,7 +576,6 @@ class systemTrade:
         nstr = ''
         for f in flist:
             if f > nstr:
-                # print(f)
                 nstr = f
 
         ## 탐색할 종목명 확인
@@ -577,13 +587,17 @@ class systemTrade:
             df_dict[code] = dict()
             df_dict[code]['data'] = pd.DataFrame()
 
+        ################################
+        ####     장 시작 중 시작 시, 대응...
+        ################################
+        ### 한번에 많이 불러와서 죽는 문제 -> 제약 사항 추가하여 대응하기
+
         ## KIS API 자주 사용 시, locking 됨. 테스트 버전은 최대한 재사용 하여 접속양을 줄인다.
         base_path = self.file_manager["system_trade"]["path"]
 
         if _DEBUG != True :
             ## 현 시점이 장 시작 전이면 초기 데이터를 만들어 놓기 시작합니다.
-            now_str = datetime.now().time().strftime("%H%M%S")
-            now = datetime.now()
+            now_str = datetime.now().time().strftime(now_str.replace(":",""))
             time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
 
             if '090010' <= now_str:
@@ -658,7 +672,13 @@ class systemTrade:
 
                 ## 파일로도 저장
                 stu.file_save(df_acc, file_path=base_path + time_path, file_name=f"{code}.csv", replace=False)
-        else:
+
+            ### kospi 는 항상 전달하기 (추후 신호 발생 시만 전달하기)
+            msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
+            stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
+            stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
+
+        else:  ## 장중 진행 상황 확인
             for idx, t in enumerate(day_tlist[:-1]):
                 times.append(t)
                 times.pop(0)
@@ -678,9 +698,11 @@ class systemTrade:
                         ## 0900 는 실행 하지 않음
                         pass
                     else:
-
                         for code in codes:
 
+                            ###############################
+                            #### 한국투자API 를 이용하여 DF 생성
+                            ###############################
                             df_fin = self._make_curr_df(code, times)
                             df_acc = df_dict[code]['data']
 
@@ -696,18 +718,11 @@ class systemTrade:
                             image_name = f"{name}_{code}.png"
                             cm.name = image_name
                             if len(df_acc) != 0:
-                                try:
-                                    print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
-                                    df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+                                print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
+                                df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
 
-                                    ## 다음 사용을 위해 데이터 저장
-                                    df_dict[code]['data'] = df_acc
-
-                                    ## csv 파일로도 저장
-                                    stu.file_save(df_ohlcv, file_path=base_path + time_path,
-                                                  file_name=f"{name}_{code}.csv", replace=False)
-                                except Exception as e :
-                                    print(e)
+                                ## 다음 사용을 위해 데이터 저장
+                                df_dict[code]['data'] = df_acc
 
                                 # 매수 조건이 발생하였는지 확인 (텔레그림..발생)
                                 ## 조건1: 채결 강도가 100 을 넘었을 경우, 차트로 알려주기
@@ -717,12 +732,13 @@ class systemTrade:
                                 change = self._change_ratio(close1, close0)
 
                                 df_chg = self._bollinger_chegyeol(df_ohlcv) # param 은 기본으로 사용
-                                ch_sig = df_chg.tail(self.mon_intv).bolBuy_chegyeol.any()
+                                ch_sig = df_chg.copy()
+                                ch_sig_flag = ch_sig.tail(self.mon_intv).bolBuy_chegyeol.any()
                                 # ch_sig = df_chegyeol.bolBuy_chegyeol.any()
                                 # print(name, ch_sig, df_chegyeol.bol_upper_chegyeol.to_list() )
-                                if ch_sig :
-                                    df_chg = df_chg.tail(self.mon_intv)
-                                    idx_list = df_chg[df_chg.bolBuy_chegyeol == True].index.to_list()
+                                if ch_sig_flag :
+                                    ch_sig = df_chg.copy().tail(self.mon_intv)
+                                    idx_list = ch_sig[ch_sig.bolBuy_chegyeol == True].index.to_list()
                                     del_str = datetime.now().date().strftime("%Y-%m-%d ")
                                     idx_list2 = [str(x) for x in idx_list]
                                     idx_list2 = [x.replace(del_str, '') for x in idx_list2]
@@ -731,9 +747,15 @@ class systemTrade:
                                     stu.send_telegram_message(config=self.param_init, message=_msg)
                                     stu.send_telegram_message(config=self.param_init, message=f"현재 등락률은 {change}% 입니다.(장전 갭상은 반영 못함)")
                                     stu.send_telegram_image(config=self.param_init, image_name_path=image_path+image_name)
-                            else:
-                                print("SSH !!!")
 
+                                ## csv 파일로도 저장
+                                stu.file_save(df_chg, file_path=base_path + time_path,
+                                              file_name=f"{name}_{code}.csv", replace=False)
+
+                        ### kospi 는 항상 전달하기 (추후 신호 발생 시만 전달하기)
+                        msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
+                        stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
+                        stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
 
                         ## 실제 시간 확인하여 웨이팅하기
                         while True:
@@ -743,8 +765,6 @@ class systemTrade:
 
                             print(f"현재시간 ({real_time}) 이 목표시간 ({t}) 에 도달하지 못했기 때문에 기다립니다.")
                             time.sleep(30)
-
-        pass
 
     #############################
     #### Internal Func
@@ -787,6 +807,239 @@ class systemTrade:
 
         return df
 
+    def _investor_position(self):
+        '''
+          투자자별 매매 동향의 주체가 변경되는 시점을 이용하여 인버스, 레버리지 매수 매도 전략
+          이유
+            - 하락장에서는 장중 kospi 변동폭이 큼.
+            - 방향성이 전환되면 묵직하게 쭉 유지됨. (금액이 크기 때문에 추세 변화가 많지 않음)
+          평가
+            - 자동 매매 에 적합함 ( 순간의 딜레이는 중요하지 않기 때문)
+            - 알고리즘 명확하면 큰 금액을 태울 수 있음
+        :return:
+        '''
+
+
+        ### Issue: 선물 데이터 때문에 09:20 부터 진행 해야 함. (All NaN 여서 에러남)
+        now = datetime.now()
+        now_str = now.strftime("%H%M%S")
+        if now_str <= '092000':  ## URL 주소 용: 장 시작전이면, 어제 날짜 데이터를 불러옴
+            td_dt = date.today() - timedelta(days=1)
+            td = td_dt.strftime("%Y:%m:%d")
+        else:
+            td = datetime.today().strftime("%Y:%m:%d")
+        url_date = td.replace(":", "")
+
+        ## 신규 생성되는 csv, image 저장을 위한 폴더 생성 용
+        base_csv_path = self.file_manager["system_trade"]["path"] + 'kospi/csv/'
+        base_image_path = self.file_manager["system_trade"]["path"] + 'kospi/image/'
+        time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
+        if self.trade_kospi["test"] != "on":
+            df_tot_list = []
+            for i in range(4):
+                df_list = []
+                if i == 0 :  ## kospi200
+                    maxpage = 66
+                elif i == 1: ## 투자자별
+                    maxpage = 40
+                elif i == 2:  ## 투자자별
+                    maxpage = 43
+                else:
+                    maxpage = 43
+
+
+                for p in range(1, maxpage):
+                    if i == 0 :
+                        URL = f"https://finance.naver.com/sise/sise_index_time.naver?code=KOSPI&thistime={url_date}160000&page={p}"
+                        # URL = f"https://finance.naver.com/sise/sise_index_time.naver?code=KPI200&thistime={td2}160000&page={p}"
+                    elif i == 1 :
+                        URL = f"https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate={url_date}&sosok=&page={p}"
+                    elif i == 2: ## l
+                        URL = f"https://finance.naver.com/sise/programDealTrendTime.naver?bizdate={url_date}&sosok=&page={p}"
+                    else:  ## 선물
+                        URL = f"https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate={url_date}&sosok=03&page={p}"
+
+                    html = requests.get(URL)
+                    soup = Soup(html.content, "html.parser")
+                    table = soup.find('table')
+                    table_html = str(table)
+                    df = pd.read_html(table_html)
+                    df_list.append(df[0])
+
+                df_acc = pd.concat(df_list)
+                if i == 0 :
+                    df = pd.DataFrame(columns=['Date', 'Close', 'Volume', 'VolumeSize'])
+                    df['Date'] = td + ' ' + df_acc['체결시각'] + ':00'
+                    df['Close'] = df_acc['체결가']
+                    df['Volume'] = df_acc['변동량(천주)']
+                    df['VolumeSize'] = df_acc['거래대금(백만)']
+
+                    ## Open 이 없어서 강제로 생성 중
+                    df.dropna(subset=['Date'], inplace=True)
+                    df.sort_values(by="Date", inplace=True)
+                    df['Open'] = df['Close'].shift(1)
+                    # 첫번째 index nan 필요
+                    df['Open'] = df['Open'].fillna(method='bfill')
+
+                    def get_high(df):
+                        if df['Close'] >= df['Open']:
+                            return df['Close']
+                        else:
+                            return df['Open']
+                    def get_low(df):
+                        if df['Close'] < df['Open']:
+                            return df['Close']
+                        else:
+                            return df['Open']
+                    df['High'] = df.apply(get_high, axis=1)
+                    df['Low'] = df.apply(get_low, axis=1)
+
+                elif i == 1:
+                    df = pd.DataFrame(columns=['Date', 'Personal', 'Foreigner', 'Organ'])
+                    df['Date'] = td + ' ' + df_acc[('시간', '시간')] + ':00'
+                    df['Personal'] = df_acc[('개인', '개인')]
+                    df['Foreigner'] = df_acc[('외국인', '외국인')]
+                    df['Organ'] = df_acc[('기관계', '기관계')]
+
+                elif i == 2:
+                    df = pd.DataFrame(columns=['Date', 'Arbitrage', 'NonArbitrage', 'TotalArbitrage'])
+                    df['Date'] = td + ' ' + df_acc[('시간', '시간')] + ':00'
+                    df['Arbitrage'] = df_acc[('차익거래', '순매수')]
+                    df['NonArbitrage'] = df_acc[('비차익거래', '순매수')]
+                    df['TotalArbitrage'] = df_acc[('전체', '순매수')]
+                else:
+                    ### 09:20 부터 진행 해야 함. (All NaN 여서 에러남)
+                    df = pd.DataFrame(columns=['Date', 'FuturePersonal', 'FutureForeigner', 'FutureOrgan'])
+                    df['Date'] = td + ' ' + df_acc[('시간', '시간')] + ':00'
+                    df['FuturePersonal'] = df_acc[('개인', '개인')]
+                    df['FutureForeigner'] = df_acc[('외국인', '외국인')]
+                    df['FutureOrgan'] = df_acc[('기관계', '기관계')]
+
+                ## common
+                df.sort_values(by="Date", inplace=True)
+                df.set_index(['Date'], drop=True, inplace=True)
+                df.drop_duplicates(inplace=True)
+                df.dropna(inplace=True)
+
+                ## acc.
+                df_tot_list.append(df)
+
+            ## join  (시간 간격이 존재하여 missing 발생함)
+            df_tot = df_tot_list[0].join(df_tot_list[1])
+            df_tot = df_tot.join(df_tot_list[2])
+            df_tot = df_tot.join(df_tot_list[3])
+            df_tot.index = pd.to_datetime(df_tot.index, format="%Y:%m:%d %H:%M:%S")
+
+            ## 중간에 발생한 missing 처리
+            df_tot.interpolate(inplace=True)
+
+            ## 현 시점이 장 시작 전이면 초기 데이터를 만들어 놓기 시작합니다.
+            stu.file_save(df_tot, file_path=base_csv_path + time_path, file_name=f"kospi.csv", replace=False)
+        else: # 이미 만들어진 데이터 활용
+
+            ## 마지막 저장한 데이터 가져오기
+            path = self.file_manager["system_trade"]["path"] + "kospi/csv/"
+            tdate = self.trade_kospi["test_date"]
+
+            if tdate == 'all':
+                flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
+            else:
+                flist = glob(path + f"year={tdate[0:4]}/month={tdate[4:6]}/day={tdate[6:8]}/*/*.csv")  ## 년/월/일/시간/*.csv
+            ## 시간 포멧이 일정하기 때문에 str 비교로도 가장 최근을 선택할 수 있음
+            nstr = ''
+            for f in flist:
+                if f > nstr:
+                    nstr = f
+
+            path, name = os.path.split(nstr)
+            df_tot = stu.file_load(file_path=path+'/', file_name=name)
+            try:
+                df_tot.index = pd.to_datetime(df_tot.index, format="%Y:%m:%d %H:%M:%S")
+            except:
+                print(f"타임 포멧이 잘못 저장되었음. 찾아서 수정 필요 -- %Y-%m-%d %H:%M:%S. (파일위치:{path})")
+                df_tot.index = pd.to_datetime(df_tot.index, format="%Y-%m-%d %H:%M:%S")
+
+            ## 중간에 발생한 missing 처리
+            df_tot.interpolate(inplace=True)
+
+        cm = tradeStrategy('./config/config.yaml')
+        cm.display = self.trade_kospi['display']  ## 파일로 차트 저장하기
+        cm.path = base_image_path + time_path
+        cm.name = 'kospi.png'
+        df_ohlcv = cm.run('00000000', 'kospi', data=df_tot, dates=[td, td], mode='investor')
+
+        stClose = df_ohlcv.Close.iat[0]
+        endClose = df_ohlcv.Close.iat[-1]
+        change =self._change_ratio(curr=endClose, prev=stClose)
+
+
+
+        msg_kospi = dict()
+        msg_kospi['image_name_path'] = base_image_path + time_path + "kospi.png" ## for telegram
+        msg_kospi['msg'] = f'현재 {now_str} kospi 등락률은 {change} % 입니다.' # for 등락률
+
+        # stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
+        # stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
+
+        return msg_kospi
+
+    ###############################################
+    ##########       Note          ################
+    ###############################################
+    '''
+# 계좌 잔고를 DataFrame 으로 반환
+# Input: None (Option) rtCashFlag=True 면 예수금 총액을 반환하게 된다
+# Output: DataFrame (Option) rtCashFlag=True 면 예수금 총액을 반환하게 된다
+--> def get_acct_balance(rtCashFlag=False):
+    
+# 내 계좌의 일별 주문 체결 조회
+# Input: 시작일, 종료일 (Option)지정하지 않으면 현재일
+# output: DataFrame
+--> def get_my_complete(sdt, edt=None, prd_code='01', zipFlag=True):
+
+# 매수 가능(현금) 조회
+# Input: None
+# Output: 매수 가능 현금 액수
+def get_buyable_cash(stock_code='', qry_price=0, prd_code='01'):
+    
+# 주문 base function
+# Input: 종목코드, 주문수량, 주문가격, Buy Flag(If True, it's Buy order), order_type="00"(지정가)
+# Output: HTTP Response
+--> def do_order(stock_code, order_qty, order_price, prd_code="01", buy_flag=True, order_type="00"):
+    
+# 사자 주문. 내부적으로는 do_order 를 호출한다.
+# Input: 종목코드, 주문수량, 주문가격
+# Output: True, False
+--> def do_sell(stock_code, order_qty, order_price, prd_code="01", order_type="00"):
+
+
+# 팔자 주문. 내부적으로는 do_order 를 호출한다.
+# Input: 종목코드, 주문수량, 주문가격
+# Output: True, False
+--> def do_buy(stock_code, order_qty, order_price, prd_code="01", order_type="00"):
+
+# 특정 주문 취소(01)/정정(02)
+# Input: 주문 번호(get_orders 를 호출하여 얻은 DataFrame 의 index  column 값이 취소 가능한 주문번호임)
+#       주문점(통상 06010), 주문수량, 주문가격, 상품코드(01), 주문유형(00), 정정구분(취소-02, 정정-01)
+# Output: APIResp object
+--> def _do_cancel_revise(order_no, order_branch, order_qty, order_price, prd_code, order_dv, cncl_dv, qty_all_yn):
+
+# 특정 주문 취소
+-->--> def do_cancel(order_no, order_qty, order_price="01", order_branch='06010', prd_code='01', order_dv='00', cncl_dv='02',qty_all_yn="Y"):
+# 특정 주문 정정
+-->--> def do_revise(order_no, order_qty, order_price, order_branch='06010', prd_code='01', order_dv='00', cncl_dv='01', qty_all_yn="Y"):
+
+# 모든 주문 취소
+# Input: None
+# Output: None
+def do_cancel_all():
+
+
+
+    '''
+
+
 
 if __name__ == '__main__':
 
@@ -795,16 +1048,19 @@ if __name__ == '__main__':
     # sched.start()
 
     tr = systemTrade(mode='real')
+
+
+    #######
+    kis.auth()
+    ## 계좌 정보
+    df = kis.get_acct_balance()
+
+    # tr._investor_position()
     tr.run()
 
 
 
 
-    #######
-    kis.auth()
-
-    ## 계좌 정보
-    # df = kis.get_acct_balance()
 
     ## 일별 주문 체결 조회
     # kis.get_my_complete(sdt='20220901')

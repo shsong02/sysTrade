@@ -129,7 +129,7 @@ class tradeStrategy:
                 df_krx2 = df_krx
 
             ## 장중에 진행 시, krx 는 어제 까지 ... 시세는 현재까지라
-            if len(df_out) > len(df_krx):
+            if len(df_out) > len(df_krx2):
                 df_out = df_out.head(len(df_krx2))
 
             ## kospi 와 종목간의 일치성 확인
@@ -160,13 +160,30 @@ class tradeStrategy:
 
 
 
-        else: ## realtime
+        elif mode == "realtime":
             if len(data) == 0:
                 raise ValueError("입력된 데이터의 크기가 0 입니다.")
             else:
                 df_out = data.copy()
                 st = dates[0]
                 end = dates[1]
+        elif mode == "etf":
+            if len(data) == 0:
+                raise ValueError("입력된 데이터의 크기가 0 입니다.")
+            else:
+                df_out = data.copy()
+                st = dates[0]
+                end = dates[1]
+        elif mode == "investor":
+            df_out = data.copy()
+            st = dates[0]
+            end = dates[1]
+
+
+
+        else:
+            raise ValueError(f"지원하지 않는 모드 ({mode}) 입니다. ")
+
 
         ## make sub-plot
         macd = self._macd(df_out, 12, 26, 9)
@@ -174,12 +191,12 @@ class tradeStrategy:
         rsi = self._rsi(df_out, 14)
         bol = self._bollinger(df_out, window=20, sigma=2.0)
         obv = self._obv(df_out, mav=20)
-
         vol_abn = self._volume_anomaly(df_out, window=7, quantile=0.80, mode=mode)
 
 
         ## 이동 평균 추가
-        df_out['CloseRatio'] = round((df_out['Close'] - df_out['Open']) / df_out['Close'] * 100, 2)
+        if mode != 'investor':  ## 당일 kospi 는 open, close 가 없음.
+            df_out['CloseRatio'] = round((df_out['Close'] - df_out['Open']) / df_out['Close'] * 100, 2)
         df_out['ma5'] = round(df_out['Close'].rolling(window=5).mean())
         df_out['ma20'] = round(df_out['Close'].rolling(window=20).mean())
         df_out['ma40'] = round(df_out['Close'].rolling(window=40).mean())
@@ -198,6 +215,24 @@ class tradeStrategy:
         df_out['ma520DistPos'] = df_out['ma520Dist'] - df_out['ma520Dist'].shift(1)
 
 
+        ##################################
+        ####   매수, 매도 조건 만들어 내기
+        ##################################
+        if mode != 'investor':
+            pntDict = self._check_buy_sell(df_out)
+        else:
+            pntDict = self._check_buy_sell_investor(df_out)
+
+        points = []
+        colors = []
+        for key, value in pntDict.items():
+            data = value['data']
+            color = value['color']
+
+            if not len(data) == 0 :
+                points = points + data
+                temp = [color for i in range(len(data))]
+                colors = colors + temp
 
         ## Pannel number
         if mode == "daily": ##
@@ -273,14 +308,14 @@ class tradeStrategy:
                     #stochastic
                     # mpf.make_addplot((stochastic[['%K', '%D', '%SD', 'UL', 'DL']]), ylim=[0, 100], ylabel='Stoch', panel=pannel_id['stochestic'])
                 ]
-        else:   ## realtime 관련 차트 내용
+        elif mode == "realtime":
             pannel_id = {
                 'volume':       2,
                 'maDist':       3,
                 'chegyeol':     4,
                 # 'maDistPos':    3,
-                'rsi':          5,
-                'obv' :         6
+                # 'rsi':          5,
+                # 'obv' :         6
             }
 
             ## add sub-plot
@@ -308,6 +343,48 @@ class tradeStrategy:
                     # mpf.make_addplot(df_out['ma520DistCenter'], color='black', secondary_y=False, panel=pannel_id['maDistPos']),
 
                     ## rsi
+                    # mpf.make_addplot(rsi['rsi'], ylim=[0, 100], ylabel='RSI',  panel=pannel_id['rsi']),
+                    # mpf.make_addplot(rsi['rsi_high'], color='r', panel=pannel_id['rsi']),
+                    # mpf.make_addplot(rsi['rsi_low'], color='b', panel=pannel_id['rsi']),
+                    #
+                    # ## obv
+                    # mpf.make_addplot(obv['obv'], ylabel='OBV', color='#8c564b', panel=pannel_id['obv']),
+                    # mpf.make_addplot(obv['obv_ema'], color='#e377c2', panel=pannel_id['obv']),
+
+
+                ]
+        elif mode == "etf":
+            pannel_id = {
+                'volume':       2,
+                'maDist':       3,
+                'maDistPos':    4,
+                'rsi':          5,
+                'obv' :         6
+            }
+
+            ## add sub-plot
+            if self.display != 'off':
+                add_plots = [
+                    mpf.make_addplot(bol['bol_upper'], color='#606060'),
+                    mpf.make_addplot(bol['bol_lower'], color='#1f77b4'),
+
+                    ## volume anomaly
+                    mpf.make_addplot(df_out['VolumeThreshold'], ylabel='Turnover ratio', color='orange', panel=pannel_id['volume']),
+                    mpf.make_addplot(df_out['VolumeTurnOver'],  color='black', panel=pannel_id['volume']),
+                    mpf.make_addplot(df_out['VolumeAnomaly'], type='scatter', marker='v', markersize=200, color='red',
+                                     panel=pannel_id['volume']),
+
+                    ## ma 거리차
+                    mpf.make_addplot(df_out['ma520Dist'], ylabel='Distance(ma5 - ma20)', color='#8c564b', panel=pannel_id['maDist']),
+                    mpf.make_addplot(df_out['ma520DistCenter'], color='black', secondary_y=False, panel=pannel_id['maDist']),
+
+
+                    ## ma 방향성
+                    mpf.make_addplot(df_out['ma520DistPos'], ylabel="Dist(ma5 20)'s direction", color='#8c564b',
+                                     panel=pannel_id['maDistPos']),
+                    mpf.make_addplot(df_out['ma520DistCenter'], color='black', secondary_y=False, panel=pannel_id['maDistPos']),
+
+                    ## rsi
                     mpf.make_addplot(rsi['rsi'], ylim=[0, 100], ylabel='RSI',  panel=pannel_id['rsi']),
                     mpf.make_addplot(rsi['rsi_high'], color='r', panel=pannel_id['rsi']),
                     mpf.make_addplot(rsi['rsi_low'], color='b', panel=pannel_id['rsi']),
@@ -315,56 +392,56 @@ class tradeStrategy:
                     ## obv
                     mpf.make_addplot(obv['obv'], ylabel='OBV', color='#8c564b', panel=pannel_id['obv']),
                     mpf.make_addplot(obv['obv_ema'], color='#e377c2', panel=pannel_id['obv']),
+                ]
+        elif mode == "investor":
 
+            pannel_id = {
+                'foreign':       2,
+                'fpo':       3,
+                'f2p':      4,
+                'future':   5,
+                'ff2p':     6,
+                'f2ff2p':   7,
+                'program':  8,
+            }
+
+            ## add sub-plot
+            if self.display != 'off':
+                add_plots = [
+                    mpf.make_addplot(bol['bol_upper'], color='#606060'),
+                    mpf.make_addplot(bol['bol_lower'], color='#1f77b4'),
+
+                    mpf.make_addplot(df_out['Foreigner'], ylabel='Foreigner', color='black', panel=pannel_id['foreign']),
+                    mpf.make_addplot(df_out['Foreigner_ma5'],  color='blue', panel=pannel_id['foreign']),
+                    mpf.make_addplot(df_out['Foreigner_ma20'],  color='orange', panel=pannel_id['foreign']),
+                    mpf.make_addplot(df_out['Foreigner_ma40'],  color='green', panel=pannel_id['foreign']),
+
+                    mpf.make_addplot(df_out['Foreigner'], ylabel='Investor: F(bk),P(y),O(g)', color='black', panel=pannel_id['fpo']),
+                    mpf.make_addplot(df_out['Personal'], secondary_y=False,  color='yellow',  panel=pannel_id['fpo']),
+                    mpf.make_addplot(df_out['Organ'], secondary_y=False, color='green', panel=pannel_id['fpo']),
+
+                    mpf.make_addplot(df_out['F2P'], ylabel='Foreign-Personal', color='pink', panel=pannel_id['f2p']),
+                    # mpf.make_addplot(df_out['F2P_ma5'], color='blue', panel=pannel_id['f2p']),
+                    # mpf.make_addplot(df_out['F2P_ma20'], color='orange', panel=pannel_id['f2p']),
+                    # mpf.make_addplot(df_out['F2P_ma40'], color='green', panel=pannel_id['f2p']),
+
+                    mpf.make_addplot(df_out['FutureForeigner'], ylabel='Future: F(bk),P(y),O(g)', color='black', panel=pannel_id['future']),
+                    mpf.make_addplot(df_out['FuturePersonal'], secondary_y=False, color='yellow', panel=pannel_id['future']),
+                    mpf.make_addplot(df_out['FutureOrgan'], secondary_y=False, color='green', panel=pannel_id['future']),
+
+                    mpf.make_addplot(df_out['FF2P'], ylabel='Future(Foreign-Personal)', color='pink', panel=pannel_id['ff2p']),
+
+                    mpf.make_addplot(df_out['F2P_FF2P'], ylabel='Sum(F2P, FF2P)', color='red', panel=pannel_id['f2ff2p']),
+
+                    mpf.make_addplot(df_out['Arbitrage'], ylabel='arb(b), nonarb(r)', color='blue', panel=pannel_id['program']),
+                    mpf.make_addplot(df_out['NonArbitrage'], secondary_y=False, color='red', panel=pannel_id['program']),
 
                 ]
+            pass
+        else:
+            raise ValueError(f"sub_plot 생성 중 에러 발생입니다. 지원하지 않는 모드 ({mode}) 입니다. ")
 
 
-        ##################################
-        ####   매수, 매도 조건 만들어 내기
-        ##################################
-        self._check_buy_sell(df_out)
-
-        ##################################
-        ####   Chart 에 표식 남기기
-        ##################################
-        pntDict = dict()
-
-        # pntDict['rsiBuy'] = dict()
-        # pntDict['rsiBuy']['data'] = df_out[df_out.rsiBuy == True].index.to_list()  ## rsi 기준으로 buy 시점
-        # pntDict['rsiBuy']['color'] = 'pink'
-        # pntDict['rsiSell'] = dict()
-        # pntDict['rsiSell']['data'] = df_out[df_out.rsiSell == True].index.to_list() ## rsi 기준으로 sell 시점
-        # pntDict['rsiBuy']['color'] = '#60b8f7'
-        # pntDict['volAnomaly'] = dict()
-        # pntDict['volAnomaly']['data'] = df_out[df_out.VolumeAnomaly.notnull()].index.to_list() ## 거래량 증가 시점
-        # pntDict['volAnomaly']['color'] = '#f29c2c'  # 오렌지
-        pntDict['bolBuy'] = dict()
-        pntDict['bolBuy']['data'] = df_out[df_out.finalBuyTest0 == True].index.to_list() ## bol 기준으로 buy 시점
-        pntDict['bolBuy']['color'] = '#66ff33'  ## 밝은 녹색
-        # pntDict['bolSell'] = dict()
-        # pntDict['bolSell']['data'] = df_out[df_out.bolSell == True].index.to_list() ## bol 기준으로 sell 시점
-        # pntDict['bolSell']['color'] = '#0d3300'  ## 진한 녹색
-        pntDict['maBuy'] = dict()
-        pntDict['maBuy']['data'] = df_out[df_out.finalBuy == True].index.to_list() ## bol 기준으로 sell 시점
-        pntDict['maBuy']['color'] = '#ff33bb'  ## 핑크 계열
-        pntDict['maBuyTest1'] = dict()
-        pntDict['maBuyTest1']['data'] = df_out[df_out.finalBuyTest1 == True].index.to_list() ## bol 기준으로 sell 시점
-        pntDict['maBuyTest1']['color'] = '#e60000'  ## 보라색 계열
-        pntDict['maSell'] = dict()
-        pntDict['maSell']['data'] = df_out[df_out.finalSell == True].index.to_list() ## bol 기준으로 sell 시점
-        pntDict['maSell']['color'] = '#002080'  ## 진파랑 계열
-
-        points = []
-        colors = []
-        for key, value in pntDict.items():
-            data = value['data']
-            color = value['color']
-
-            if not len(data) == 0 :
-                points = points + data
-                temp = [color for i in range(len(data))]
-                colors = colors + temp
 
         ## 패널정리
         pannel_ratio = [3,1]
@@ -391,32 +468,123 @@ class tradeStrategy:
             except Exception as e:
                 raise e
 
-            mpf.plot(df_out, type='candle', mav=(5,20,60), volume=True, addplot=add_plots, panel_ratios=tuple(pannel_ratio),
-                      figsize=(30, 8 + 3*pannel_cnt),
-                      title=title,
-                      vlines=dict(vlines= points, linewidths=5, colors=colors, alpha=0.30),
-                      figscale=0.8, style=s,
-                      scale_padding={'right':2.0, 'left':0.5},
-                      warn_too_much_data=5000,
-                      tight_layout=True,
-                      savefig=f'{self.path}{self.name}',
-                      )
+            try:
+                mpf.plot(df_out, type='candle', mav=(5,20,60), volume=True, addplot=add_plots, panel_ratios=tuple(pannel_ratio),
+                          figsize=(30, 8 + 3*pannel_cnt),
+                          title=title,
+                          vlines=dict(vlines= points, linewidths=5, colors=colors, alpha=0.30),
+                          figscale=0.8, style=s,
+                          scale_padding={'right':2.0, 'left':0.5},
+                          warn_too_much_data=5000,
+                          tight_layout=True,
+                          savefig=f'{self.path}{self.name}',
+                          )
+            except Exception as e:
+                logger.error(e)
         elif self.display == 'on':
-            mpf.plot(df_out, type='candle', mav=(5, 20, 60), volume=True, addplot=add_plots,
-                     panel_ratios=tuple(pannel_ratio),
-                     figsize=(30, 8 + 3 * pannel_cnt),
-                     title=title,
-                     vlines=dict(vlines=points, linewidths=5, colors=colors, alpha=0.30),
-                     figscale=0.8, style=s,
-                     scale_padding={'right': 2.0, 'left': 0.5},
-                     warn_too_much_data=5000,
-                     tight_layout=True,
-                     )
+            try:
+                mpf.plot(df_out, type='candle', mav=(5, 20, 60), volume=True, addplot=add_plots,
+                         panel_ratios=tuple(pannel_ratio),
+                         figsize=(30, 8 + 3 * pannel_cnt),
+                         title=title,
+                         vlines=dict(vlines=points, linewidths=5, colors=colors, alpha=0.30),
+                         figscale=0.8, style=s,
+                         scale_padding={'right': 2.0, 'left': 0.5},
+                         warn_too_much_data=5000,
+                         tight_layout=True,
+                         )
+            except Exception as e:
+                logger.error(e)
         else:
             ## chart 관련 코드는 위에서 생성되지 않도록 처리 함. (인스턴스 살아 있는 상태에서 on 으로 바뀌는 것을 대비)
             pass
 
         return df_out
+
+
+    def _check_buy_sell_investor(self, df):
+        df['Foreigner_ma5'] = round(df['Foreigner'].rolling(window=5).mean())
+        df['Foreigner_ma20'] = round(df['Foreigner'].rolling(window=20).mean())
+        df['Foreigner_ma40'] = round(df['Foreigner'].rolling(window=40).mean())
+
+        df['Personal_ma5'] = round(df['Personal'].rolling(window=5).mean())
+        df['Personal_ma20'] = round(df['Personal'].rolling(window=20).mean())
+        df['Personal_ma40'] = round(df['Personal'].rolling(window=40).mean())
+
+        df['Organ_ma5'] = round(df['Organ'].rolling(window=5).mean())
+        df['Organ_ma20'] = round(df['Organ'].rolling(window=20).mean())
+        df['Organ_ma40'] = round(df['Organ'].rolling(window=40).mean())
+
+        df['F2P'] = df['Foreigner'] - df['Personal']
+        df['F2P_ma5'] = round(df['F2P'].rolling(window=5).mean())
+        df['F2P_ma20'] = round(df['F2P'].rolling(window=20).mean())
+        df['F2P_ma40'] = round(df['F2P'].rolling(window=40).mean())
+
+        df['FF2P'] = df['FutureForeigner'] - df['FuturePersonal']
+        df['FF2P_ma5']  = round(df['FF2P'].rolling(window=5).mean())
+        df['FF2P_ma20'] = round(df['FF2P'].rolling(window=20).mean())
+        df['FF2P_ma40'] = round(df['FF2P'].rolling(window=40).mean())
+
+        df['F2P_FF2P'] = df['F2P'] + df['FF2P']
+
+        ####################################
+        ####     매수 타이밍 정리
+        ####################################
+        queue = [0,0,0,0]
+        buy_times = []  ## 매수 시점 기록
+        buy_times2 = []  ## 매수 시점 기록
+        for i, idx in enumerate(df.index):
+            if i == 0:
+                ma5_prev = 2
+                ma20_prev = 1
+                ma40_prev = 0
+
+                f2p_ma5_prev = 2
+                f2p_ma20_prev = 1
+                f2p_ma40_prev = 0
+
+            ma5 = df.Foreigner_ma5.iat[i]
+            ma20 = df.Foreigner_ma20.iat[i]
+            ma40 = df.Foreigner_ma40.iat[i]
+
+            f2p_ma5 = df.F2P_ma5.iat[i]
+            f2p_ma20 = df.F2P_ma20.iat[i]
+            f2p_ma40 = df.F2P_ma40.iat[i]
+
+            if ma5 > ma20 and ma5_prev <= ma20_prev:
+                buy_times.append(True)
+            else:
+                buy_times.append(False)
+
+            ## 개인, 외국인 포지션이 변경되는 시점
+            if f2p_ma20 > f2p_ma40 and f2p_ma20_prev <= f2p_ma40_prev:
+                buy_times2.append(True)
+            elif f2p_ma20 <= f2p_ma40 and f2p_ma20_prev > f2p_ma40_prev:
+                buy_times2.append(True)
+            else:
+                buy_times2.append(False)
+
+            ma5_prev = ma5
+            ma20_prev = ma20
+            ma40_prev = ma40
+            f2p_ma5_prev  = f2p_ma5
+            f2p_ma20_prev = f2p_ma20
+            f2p_ma40_prev = f2p_ma40
+
+        df['finalBuy'] = buy_times ## 매도에서 사용
+        df['F2PBuy'] = buy_times2 ## 매도에서 사용
+        ##################################
+        ####   Chart 에 표식 남기기
+        ##################################
+        pntDict = dict()
+        pntDict['ForeignBuy'] = dict()
+        pntDict['ForeignBuy']['data'] = df[df.finalBuy == True].index.to_list() ## bol 기준으로 sell 시점
+        pntDict['ForeignBuy']['color'] = '#ff33bb'  ## 핑크 계열
+        pntDict['F2PBuy'] = dict()
+        pntDict['F2PBuy']['data'] = df[df.F2PBuy == True].index.to_list() ## bol 기준으로 sell 시점
+        pntDict['F2PBuy']['color'] = '#17992d'  ## 그린 계열
+
+        return pntDict
 
 
     #### 매매 타이밍 체크
@@ -682,11 +850,42 @@ class tradeStrategy:
         df['finalSell'] = sell_times
         df['finalSellQnty'] = sell_times
 
+        ##################################
+        ####   Chart 에 표식 남기기
+        ##################################
+        pntDict = dict()
+        # pntDict['rsiBuy'] = dict()
+        # pntDict['rsiBuy']['data'] = df_out[df_out.rsiBuy == True].index.to_list()  ## rsi 기준으로 buy 시점
+        # pntDict['rsiBuy']['color'] = 'pink'
+        # pntDict['rsiSell'] = dict()
+        # pntDict['rsiSell']['data'] = df_out[df_out.rsiSell == True].index.to_list() ## rsi 기준으로 sell 시점
+        # pntDict['rsiBuy']['color'] = '#60b8f7'
+        # pntDict['volAnomaly'] = dict()
+        # pntDict['volAnomaly']['data'] = df_out[df_out.VolumeAnomaly.notnull()].index.to_list() ## 거래량 증가 시점
+        # pntDict['volAnomaly']['color'] = '#f29c2c'  # 오렌지
+        pntDict['bolBuy'] = dict()
+        pntDict['bolBuy']['data'] = df[df.finalBuyTest0 == True].index.to_list() ## bol 기준으로 buy 시점
+        pntDict['bolBuy']['color'] = '#66ff33'  ## 밝은 녹색
+        # pntDict['bolSell'] = dict()
+        # pntDict['bolSell']['data'] = df[df.bolSell == True].index.to_list() ## bol 기준으로 sell 시점
+        # pntDict['bolSell']['color'] = '#0d3300'  ## 진한 녹색
+        pntDict['maBuy'] = dict()
+        pntDict['maBuy']['data'] = df[df.finalBuy == True].index.to_list() ## bol 기준으로 sell 시점
+        pntDict['maBuy']['color'] = '#ff33bb'  ## 핑크 계열
+        pntDict['maBuyTest1'] = dict()
+        pntDict['maBuyTest1']['data'] = df[df.finalBuyTest1 == True].index.to_list() ## bol 기준으로 sell 시점
+        pntDict['maBuyTest1']['color'] = '#e60000'  ## 보라색 계열
+        pntDict['maSell'] = dict()
+        pntDict['maSell']['data'] = df[df.finalSell == True].index.to_list() ## bol 기준으로 sell 시점
+        pntDict['maSell']['color'] = '#002080'  ## 진파랑 계열
+
+        return pntDict
+
     ##########################################################################
 
 
     def _change_ratio(self, curr, prev):
-        return round((curr - prev) / curr * 100, 2)
+        return round(float((int(curr) - int(prev)) / int(curr)) * 100, 2)
 
     ##########################################################################
     ######     Sub-Chart
@@ -721,8 +920,14 @@ class tradeStrategy:
                 anomalies.append(np.nan)
 
         df["VolumeThreshold"] = uppers
-        df["VolumeAnomaly"] = anomalies
 
+        if np.isnan(anomalies).sum() == len(anomalies): ## 값이 하나도 없을 경우 chart 에러 발생함.
+            dmmy = df.VolumeTurnOver.iat[0]
+            anomalies.pop(0)  ## inplace
+            anomalies.insert(0, dmmy)
+        else:
+            pass
+        df["VolumeAnomaly"] = anomalies
 
         return df
 

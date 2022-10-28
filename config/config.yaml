@@ -48,6 +48,13 @@ mainInit:
   telegram_id : "5484958882"
 
 tradeStock:
+  scheduler:
+    mode: "real"
+    interval: 5  # unit: min.
+    target: "all"  # all, stock, kospi
+    reduce_api: True
+
+
   buy_condition:
     codepick_buy_holdday: 40 # days
     timepick_trend_period: "ma60" # ma20, ma40 or ma60
@@ -55,15 +62,24 @@ tradeStock:
   sell_condition:
     default_profit_change: 10 # unit: percentage
     default_holding_days: 30 # unit: days
-  scheduler:
-    mode: "real"
-    interval: 10  # unit: min.
+  kospi:
+    control:
+      test: "off"  ## off, on
+#      test_date: "all"  ## all, 20221018...
+      test_date: "20221019"  ## all, 20221018...
+      display: 'save' # on, off, save
+
+
+searchMacro:
+  config:
+    change_period: 1
+    chart_period: 300
 
 searchStock:
   mode: 'market_leader'   ## market_leader, theme, upjong
   market_leader:
     target: 'from_krx'   ## from_krx, from_theme, from_code, from_name,
-    display_chart: 'on'  ## on, off, save,
+    display_chart: 'save'  ## on, off, save,
     from_krx:
       params:
         threshold_close: 10000  # 조건1 - 종가 최소 금액
@@ -146,34 +162,4 @@ searchStock:
 
 
 
-
-scoreRule:
-  score_debt_ratio:
-    - 0
-    - 100
-    - 150
-    - 200
-
-  score_quick_ratio:
-    - 10000
-    - 100
-    - 75
-    - 50
-
-  score_reserve_ratio:
-    - 10000000
-    - 100
-    - 0
-
-  score_market_value:
-    - 0
-    - 200000000000
-    - 400000000000
-    - 600000000000
-
-
-
-keyList:
-  dart:
-    key: "48dff989e7225f28049553a41b5114232ef8c9f2"
 

@@ -547,11 +547,10 @@ class searchStocks :
                         cur_stocks.remove(name)
                         # print(cur_stocks)
 
-
-            # logger.info(f"종목 ({name} - {Code}) 의 뉴스정보 수집을 시작합니다. ")
-            # df_news = nc.search_keyword(name)
-
             try:
+                ####################################
+                ####  종목별 Score Print 하기
+                ####################################
                 fi_score = df_fin[df_fin.index == name]['total_score'].values[0]
                 vol_cost = df_fin[df_fin.index == name]['VolumeCost'].values[0]
                 vol_cost = round(vol_cost / 100000000)  ## 단위 억
@@ -569,23 +568,17 @@ class searchStocks :
             # logger.info(f"종목 ({name} - {code}) 의 등락율 차트를 생성합니다.")
             df_ohlcv = strategy.run(code, name=name, dates=dates, data='none', mode='daily')
 
-            ## backtest 진행
-            # df_ohlcv.finalSell = False
-            # bt = Backtest(df_ohlcv, backTestCustom, commission=.015, cash=10000000, exclusive_orders=False)
-            #
-            # stats = bt.run()
-            # bt.plot()
-            # print(stats)
-
             ## 한달동안 매수 신호가 발생한 종목 수집하기
             if any(df_ohlcv.tail(self.trade_config["buy_condition"]["codepick_buy_holdday"]).finalBuy.to_list()):
                 buy_name.append(name)
                 buy_dict[name] = dict()
                 buy_dict[name]['code'] = code
                 last_d = df_ohlcv[df_ohlcv.finalBuy == True]['finalBuy'].index.to_list()[-1]
+                priceEarning = stu.change_ratio(curr=df_ohlcv.Close.iat[-1], prev=df_ohlcv.Close.at[last_d]) # 수익률
                 hold_d = datetime.today() - last_d
                 buy_dict[name]['buy_day'] = last_d
                 buy_dict[name]['buy_hold_day'] = hold_d
+                buy_dict[name]['priceEarning'] = priceEarning
 
 
 
@@ -620,14 +613,17 @@ class searchStocks :
         df["select_mode"] = self.target
         df["buy_day"] = 0
         df["buy_hold_day"] = 0
+        df["priceEarning"] = 0
         for name, value in buy_dict.items():
             df.loc[name, "buy_day"] = value["buy_day"]
             df.loc[name, "buy_hold_day"] = value["buy_hold_day"]
+            df.loc[name, "priceEarning"] = value["priceEarning"]
         df.sort_values(by='buy_hold_day', inplace=True)
         for name in df.index:
             last_d = str(df.at[name,'buy_day'])
             hold_d = str(df.at[name,'buy_hold_day'])
-            logger.info(f"종목명 (매수조건 만족) :{name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d} ")
+            earn = str(df.at[name,'priceEarning'])
+            logger.info(f"종목명 (매수조건 만족) :{name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d} , 당일까지 수익률: {earn}%")
 
         ## 폴더 생성
         base_path = self.file_manager["monitor_stocks"]["path"]
