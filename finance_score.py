@@ -1,65 +1,66 @@
-import FinanceDataReader as fdr
-import pandas as pd
+# pylint: disable=broad-except, W1203
 import os
-import yaml
-import pprint
 import math
 import time
 from datetime import datetime
 
-## html
-import requests
-from bs4 import BeautifulSoup as Soup
-from selenium import webdriver
-
-##multi-processing
+# multi-processing
 from multiprocessing import Pool
 import multiprocessing as mp
 
-#chart
+import yaml
+import pandas as pd
 
-#Dart
-import OpenDartReader
+# html
+import requests
+from bs4 import BeautifulSoup as Soup
+from selenium import webdriver
+import FinanceDataReader as fdr
+
+# chart
+
+# Dart
+# import OpenDartReader
 
 
-## local file
+# local file
 from tools import st_utils as stu
 
 ######### Global ############
 pd.set_option('display.max_row', 500)
 pd.set_option('display.max_columns', 100)
 
-## log 폴더 생성
+# log 폴더 생성
 try:
     if not os.path.exists("./log"):
         os.makedirs("./log")
-except Exception as e :
+except Exception as e:
     print(e)
 
 ####    로그 생성    #######
 logger = stu.create_logger()
 
+## Chrome Driver path 를 지정해줌,  TODO: 드라이버 버전 업데이트 해당 위치에 카피 하기
+driver_path = "/usr/local/bin/chromedriver"
+
+
 class financeScore:
     def __init__(self, config_file):
 
-        ## 설정 파일을 필수적으로 한다.
-        try:
-            with open(config_file) as f:
-                config = yaml.load(f, Loader=yaml.FullLoader)
-        except Exception as e :
-            print (e)
+        # 설정 파일을 필수적으로 한다.
+        with open(config_file, encoding="utf-8") as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
+        # pylint: disable=logging-fstring-interpolation
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
 
-        ## global 변수 선언
+        # global 변수 선언
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
         self.score_rule = config["scoreRule"]
-        self.keys = config["keyList"]
+        # self.keys = config["keyList"]
 
-    def finance_state(self, code_name, mode='quarter',
-                      select=[['매출액증가율','영업이익증가율','영업이익률','ROE','부채비율'],
-                              ['당기순이익', 'PER(배)', '부채비율', '당좌비율', '유보율', 'PBR(배)']]):
+    def finance_state(self, code_name, mode='quarter',):
         """종목 코드에 대한 재무제표를 가져옵니다.
 
         ex:
@@ -80,26 +81,28 @@ class financeScore:
             df_finance_state (Dataframe): 재무제표 정보
             total_price (int): 시가총액 (현재 분기 결과)
         """
-        if not mode in ['annual','quarter']:
+        select = [['매출액증가율', '영업이익증가율', '영업이익률', 'ROE', '부채비율'],
+                  ['당기순이익', 'PER(배)', '부채비율', '당좌비율', '유보율', 'PBR(배)']]
+
+        if mode not in ['annual', 'quarter']:
             raise ValueError('annual, quater 중에 하나를 선택해 주세요.')
 
-        ##init
+        # init
         code = code_name[0]
         name = code_name[1]
 
         opt = webdriver.ChromeOptions()
         opt.add_argument('headless')
-        driver = webdriver.Chrome(options=opt)
-
+        driver = webdriver.Chrome(options=opt, executable_path=driver_path)
 
         code = str(code).zfill(6)
-        ## 네이버 재무재표 주소
+        # 네이버 재무재표 주소
         try:
             URL = f"https://navercomp.wisereport.co.kr/v2/company/c1040001.aspx?cmp_cd={code}"
 
             driver.get(URL)
 
-            ## 분기 버튼 클릭
+            # 분기 버튼 클릭
             if mode == 'annual':
                 radio = driver.find_element('id', 'frqTyp0')
                 radio.click()
@@ -107,45 +110,45 @@ class financeScore:
                 radio = driver.find_element('id', 'frqTyp1')
                 radio.click()
 
-            ## 분기/연간 선택 후, 조회 클릭
+            # 분기/연간 선택 후, 조회 클릭
             butt = driver.find_element('id', 'hfinGubun')
             butt.click()
 
-            profit      = driver.find_element('id', 'val_tab1')  # 수익성
-            growth      = driver.find_element('id', 'val_tab2')  # 성장성
-            stability   = driver.find_element('id', 'val_tab3')  # 안정성
-            activity    = driver.find_element('id', 'val_tab4')  # 활동성
+            profit = driver.find_element('id', 'val_tab1')  # 수익성
+            growth = driver.find_element('id', 'val_tab2')  # 성장성
+            stability = driver.find_element('id', 'val_tab3')  # 안정성
+            activity = driver.find_element('id', 'val_tab4')  # 활동성
 
             ids = [profit, growth, stability, activity]
             sectors = ['수익성', '성장성', '안정성', '활동성']
             df_all = []
-
-            for id, sector in zip(ids, sectors):
-                id.click()
+            # pyilnt: disable=W0622, W0612
+            for _id, _sector in zip(ids, sectors):
+                _id.click()
                 time.sleep(0.3)
                 html = driver.page_source
                 soup = Soup(html, 'html.parser')
                 table = soup.select('table')
-                table_html = str(table)  ## 테이블 html 정보를 문자열로 변경하기
-                table_df_list = pd.read_html(table_html) ## 테이블 정보 읽어 오기
-                df = table_df_list[6] # 투자정보 테이블 번호
-                df2 = df.iloc[:,:6]
-                df2.columns = ['항목', 'month-12', 'month-9', 'month-6', 'month-3', 'month-0']
+                table_html = str(table)  # 테이블 html 정보를 문자열로 변경하기
+                table_df_list = pd.read_html(table_html)  # 테이블 정보 읽어 오기
+                df = table_df_list[6]  # 투자정보 테이블 번호
+                df2 = df.iloc[:, :6]
+                df2.columns = ['항목', 'month-12', 'month-9',
+                               'month-6', 'month-3', 'month-0']
                 # df2['투자지표'] = sector
-                df2=df2.replace({'항목': '펼치기  '}, {'항목':''}, regex=True)
+                df2 = df2.replace({'항목': '펼치기  '}, {'항목': ''}, regex=True)
                 df_all.append(df2)
 
             df_tot = pd.concat(df_all)
             df_tot = df_tot.set_index(['항목'])
             df_tot = df_tot.loc[select[0]]
             # driver.clos()
-        except Exception as e:
+        except Exception as error:
             print(f"문제되는 URL: {URL}")
-            logger.error(e)
+            logger.error(error)
             df_tot = pd.DataFrame()
 
-
-        ## 새로운 df 생성 - score 저장
+        # 새로운 df 생성 - score 저장
         new_cols = []
         new_cols.append('code')
         new_cols.append('url')
@@ -154,8 +157,7 @@ class financeScore:
             new_cols.append(f"{i}_score")
         new_cols.append('total_score')
 
-
-        ## score 계산
+        # score 계산
         score_drop_values = []
         cols = df_tot.columns.to_list()
         df_out = pd.DataFrame(columns=new_cols)
@@ -169,46 +171,45 @@ class financeScore:
             for idx in df_tot.index:
                 sc = 0
                 val_list = []
-                if idx in select[0]:  ## df_tot 이 제대로 만들어지지 못하는 것에 대한 대비
+                if idx in select[0]:  # df_tot 이 제대로 만들어지지 못하는 것에 대한 대비
                     for cnt, mon in enumerate(cols):
                         val = df_tot.loc[idx, mon]
                         val_list.append(val)
                         if idx == '매출액증가율' or idx == '영업이익증가율':
-                            if val >  20 :
+                            if val > 20:
                                 sc += 3*(cnt+1)
-                            elif val > 10 :
+                            elif val > 10:
                                 sc += 2*(cnt+1)
-                            elif val  > 0 :
+                            elif val > 0:
                                 sc += 1*(cnt+1)
-                            else:  ## minus
-                                sc -= 2*(cnt+1)  ## 마이너스 일 경우, 다음 분기에 높은 스코어가 나오기 때문에, 강한 마이너스로 보정해야함
-                                pass
-                        elif idx == '영업이익률':  ## steady 한 것이 제일 좋음
-                            if val > 20 :  ## 너무 높으면 신규 사업자 진입함
+                            else:  # minus
+                                # 마이너스 일 경우, 다음 분기에 높은 스코어가 나오기 때문에, 강한 마이너스로 보정해야함
+                                sc -= 2*(cnt+1)
+                        elif idx == '영업이익률':  # steady 한 것이 제일 좋음
+                            if val > 20:  # 너무 높으면 신규 사업자 진입함
                                 sc += 3
-                            elif val > 10 :
+                            elif val > 10:
                                 sc += 2
-                            elif val > 0 :
+                            elif val > 0:
                                 sc += 1
                             else:
                                 sc -= 2
                         elif idx == 'ROE':
-                            if val > 20 :  ## 너무 높으면 이미 성숙한 사업이라 낮아질 일만 있음
+                            if val > 20:  # 너무 높으면 이미 성숙한 사업이라 낮아질 일만 있음
                                 sc += 3
-                            elif val > 10 :
+                            elif val > 10:
                                 sc += 2
-                            elif val > 0 :
+                            elif val > 0:
                                 sc += 1
                             elif val > -10:
                                 sc -= 3
                             else:
                                 # score_drop_values.append(True)
                                 sc -= 3
-                            pass
                         elif idx == '부채비율':
-                            if val > 250:  ## 부채 비율이 높으면 그냥 제외 시킴
+                            if val > 250:  # 부채 비율이 높으면 그냥 제외 시킴
                                 # score_drop_values.append(True)
-                                sc -= 2*(cnt+1) ## 부채 가중치 높임
+                                sc -= 2*(cnt+1)  # 부채 가중치 높임
                             elif val > 150:
                                 sc += 1
                             elif val > 100:
@@ -216,25 +217,27 @@ class financeScore:
                             elif val > 0:
                                 sc += 3
                             else:
-                                sc -= 3  ## 해당 경우가 존재하나??
-                            pass
+                                sc -= 3  # 해당 경우가 존재하나??
                     sc_sum.append(sc)
                     val_str = ','.join(str(e) for e in val_list)
                     df_out.loc[name, f"{idx}_list"] = val_str
                     df_out.loc[name, f"{idx}_score"] = sc
             total_score = sum(sc_sum)
-            df_out.loc[name,'total_score'] = total_score
-        except Exception as e:
+            df_out.loc[name, 'total_score'] = total_score
+        except Exception as error:
             print(f"문제되는 URL: {URL}")
-            logger.error(e)  ##
+            logger.error(error)
             # df_out.loc[name, f"{idx}_list"] = 'nan'
             # df_out.loc[name, f"{idx}_score"] = 0
             total_score = 0
-            df_out.loc[name,'total_score'] = total_score
+            df_out.loc[name, 'total_score'] = total_score
 
         try:
             URL = f"https://finance.naver.com/item/main.nhn?code={code}"
-            r = requests.get(URL)
+            try:
+                r = requests.get(URL)
+            except:
+                raise ValueError(f"{URL} 를 load 하는 과정에서 에러가 발생하였습니다. ")
             df = pd.read_html(r.text)[3]
             df.set_index(df.columns[0], inplace=True)
             df.index.rename('주요재무정보', inplace=True)
@@ -242,14 +245,16 @@ class financeScore:
             annual_date = pd.DataFrame(df).xs('최근 연간 실적', axis=1)
             quater_date = pd.DataFrame(df).xs('최근 분기 실적', axis=1)
 
-            ## 시가총액
+            # 시가총액
             temp = pd.read_html(r.text)[4]
             total_price = temp.set_index(['종목명']).loc['시가총액(억)'][0]
             total_price = int(total_price) * 100000000
 
-            ## total_price 별 그룹핑 (그불마다 전략방법이 다를 수 있음)
+            # total_price 별 그룹핑 (그불마다 전략방법이 다를 수 있음)
             score_list = self.score_rule['score_market_value']
-            total_price_group, empty_flag = self._make_score([total_price], score_list, mode='last')
+            # pylint: disable=W0612
+            total_price_group, empty_flag = self._make_score(
+                [total_price], score_list, mode='last')
             total_price_group = f'GR{total_price_group}'
 
             if mode == 'annual':
@@ -257,7 +262,7 @@ class financeScore:
             else:
                 df2 = quater_date.loc[select[1], :]
 
-            ## 일부내요 수집하기
+            # 일부내요 수집하기
             df_out['total_price'] = total_price
             df_out['total_price_group'] = total_price_group
             df3 = df2.iloc[:, :5]
@@ -275,88 +280,13 @@ class financeScore:
                     df_out['PBR'] = i
             val_str = ','.join(str(e) for e in val_list)
             df_out['PBR_list'] = val_str
-        except Exception as e :
-            print(f"문제되는 URL: {URL}... {e}")
-            score_values = [0, 0, 0, 0]
+        except Exception as error:
+            print(f"문제되는 URL: {URL}... {error}")
             score_drop = True
             df_out['total_price'] = 0
             df_out['total_price_group'] = 'GR0'
             df_out['PER_list'] = 'nan'
             df_out['PBR_list'] = 'nan'
-
-
-
-        '''
-        ## score 계산하기
-        score_values = []
-        # 1) 당기순이익: 3년 흑자 (3점) + 3년 상승 추세 (3점)
-        score_profit_add = 0
-        score_profit = 0
-
-        i2_prev = 0
-        try:
-            for i in df2.loc['당기순이익']:
-                i = float(i)
-                if np.isnan(i):
-                    continue
-                score_profit += 1 if i > 0 else 0
-
-                if i >= i2_prev:
-                    score_profit_add += 1
-                else:
-                    score_profit_add = 0
-                i2_prev = i
-        except Exception as e :
-            print(f"문제되는 URL: {URL}")
-            print(e)
-
-        score_values.append(score_profit+score_profit_add)
-        if  score_profit+score_profit_add > 0:
-            score_drop_values.append(False)
-        else:
-            score_drop_values.append(True)
-
-        # 2) 부채비율: 100% 이하 (3), 150% 이하 (2), 200% 이하 (1), 200% 이상 (종목 제거)
-        # 3) 당좌비율: 100% 이상 (3), 75% 이상 (2), 50% 이상 (1), 50% 미만 (종목 제거)
-        # 4) 사내유보율: 100% 이상이면 (3)
-        for i in range(3):
-            if i == 0 : # 부채비율
-                score_list = self.score_rule["score_debt_ratio"]
-                score_data = df2.loc['부채비율'].to_list()
-                name = '부채비율'
-            elif i == 1: # 당좌 비율
-                score_list = self.score_rule["score_quick_ratio"]
-                score_data = df2.loc['당좌비율'].to_list()
-                name = '당좌비율'
-            elif i == 2: ##
-                score_list = self.score_rule["score_reserve_ratio"]
-                score_data = df2.loc['유보율'].to_list()
-                name = '유보율'
-
-            ## 전부 nan 인지 확인
-            acc = 0
-            for i in score_data:
-                i = float(i)
-                if np.isnan(i):
-                    acc += 1
-
-            try:
-                if len(score_data) == acc :
-                    raise
-                ## 스코어 계산
-                score, score_drop = self._make_score(score_data, score_list)
-            except:
-                _msg = f"종목코드({code}) 의 ({name}) 이 전부 nan 입니다. (URL:{URL})"
-                logger.info(_msg)
-                score = 0
-                score_drop = True # 정보가 부족하면 없애기
-
-            score_values.append(score)
-            score_drop_values.append(score_drop)
-
-        # print (score_values, score_drop_values)
-        # 하나의 조건도 만족하지 못하면 해당 종목을 후보에서 제외하기 위해 사용
-        '''
 
         score_drop = any(score_drop_values)
         df_out['score_drop'] = score_drop
@@ -365,35 +295,31 @@ class financeScore:
         _msg = f"스코어= {total_score:<6} : 종목이름={name:<20}, 종목코드={code:<10} -- PID: {c_proc.pid}, PROC_NAME: {c_proc.name}"
         logger.info(_msg)
 
-        ### SSHTEST
+        # SSHTEST
         if '매출총이익률_list' in df_out.columns.to_list():
             print(df_out)
 
-
-        ## close
+        # close
         driver.close()
         driver.quit()
 
         return df_out
 
+    # def load_stock_data(self, code, date, display=False):
+    #     df = fdr.DataReader(code, date[0], date[1])
 
-    def load_stock_data(self, code, date, display=False):
-        df = fdr.DataReader(code, date[0], date[1])
+    #     file_name = f"stock_data_{code}_{date[0]}_{date[1]}.csv"
+    #     ## 파일로 저장 합니다.
+    #     self._file_save(df, self.file_manager["stock_data"]["path"], file_name)
 
-        file_name = f"stock_data_{code}_{date[0]}_{date[1]}.csv"
-        ## 파일로 저장 합니다.
-        self._file_save(df, self.file_manager["stock_data"]["path"], file_name)
+    #     if display == True:
+    #         fdr.chart.plot(df)
+    #     pass
 
-        if display == True:
-            fdr.chart.plot(df)
-        pass
-
-        return df.reset_index()
-
-
+    #     return df.reset_index()
 
     def run(self):
-        ## 거래소 모든 코드 가져오기
+        # 거래소 모든 코드 가져오기
         '''
             1) 거래소 코드 가져오기
             1-2) Sector 가 없는  코드 날리기 (Sector missing 처리)
@@ -404,7 +330,7 @@ class financeScore:
             2-3) 스코어에 따라 순위 매기기
         '''
 
-        ## instance 생성
+        # instance 생성
 
         params = self.param_init
         files = self.file_manager
@@ -412,11 +338,52 @@ class financeScore:
         ######################
         ####    STEP1     ####
         ######################
-        ## 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
+        # 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
         krx = fdr.StockListing('KRX')
-        df_stocks = krx.dropna(axis=0, subset=['Sector'])  ## 섹터값없는 코드 삭제 (ETF...)
+        # 섹터값없는 코드 삭제 (ETF...)
+        df_stocks = krx.dropna(axis=0, subset=['Sector'])
+        df_stocks.drop(['Representative','Region',], axis=1, inplace=True)
         df_stocks.reset_index(drop=True, inplace=True)
 
+        # 1-2) FinanceDataReader (외부 패키지) 가 정상적으로 동작하지 않을 경우, 이전 작업 내용을 불러오기
+        if len(df_stocks) < 100:
+            logger.warning(
+                "FinanceDataReader 가 정상적으로 동작하지 않아 이전 작업 파일을 불러 옵니다.")
+            # CSV 파일만 필터링
+            csv_files = [f for f in os.listdir(
+                files["finance_score"]["path"]) if f.endswith('.csv')]
+
+            # 날짜 형식에 맞게 파일 이름 파싱 및 최신 파일 찾기
+            date_format = '%Y-%m-%d'
+            latest_date = datetime.strptime(
+                '2020-01-01', date_format)  # 초기 날짜 설정
+            latest_file = ''
+
+            for file_name in csv_files:
+                # 파일명에서 확장자 제외
+                file_date_str = file_name.split('.')[0].split('_')[-1]
+
+                try:
+                    file_date = datetime.strptime(file_date_str, date_format)
+                except ValueError:
+                    # 파일 이름이 날짜 형식이 아닌 경우 건너뜀
+                    continue
+
+                if file_date > latest_date:
+                    latest_date = file_date
+                    latest_file = file_name
+
+            # 최신 파일을 DataFrame으로 읽어오기
+            if latest_file:
+                latest_file_path = os.path.join(
+                    files["finance_score"]["path"], latest_file)
+                df_stocks = pd.read_csv(latest_file_path)
+                # origin column 만 남기기
+                filtered_columns = [
+                    col for col in df_stocks.columns if col in krx.columns]
+                df_stocks = df_stocks[filtered_columns]
+            else:
+                print("날짜 형식의 CSV 파일이 없습니다.")
 
         def code_zfill(x):
             x_out = str(x).zfill(6)
@@ -436,48 +403,58 @@ class financeScore:
             opt = webdriver.ChromeOptions()
             opt.add_argument('headless')
             drivers = []
+            # chromedriver 버전 이슈 발생 시 명령어로 설치:
+            #   chrome brew install cask chromedriver
+            #   brew upgrade
+            # 버전 확인 -> chromedriver -version
+            # pylint: disable= W0612
             for i in range(cpu_cnt):
-                drivers.append(webdriver.Chrome(options=opt))
+                drivers.append(webdriver.Chrome(
+                    options=opt, executable_path=driver_path))
 
             codes = df_stocks['Symbol'].to_list()
             names = df_stocks['Name'].to_list()
             codes_names = list(zip(codes, names))
 
-            df_list = pool.map(self.finance_state, codes_names)
+            df_list = pool.map(self.finance_state, codes_names)  ## 병렬 처리 하기 
 
-            df_stocks_state = pd.concat(df_list)
+            df_stocks_state = pd.concat(df_list)  ## 병렬 처리 결과를 하나로 합치기
 
-            ## join
+            # join
             df_stocks.set_index(keys=['Name'], inplace=True, drop=True)
 
-            df_fin  = df_stocks.join(df_stocks_state)
+            df_fin = df_stocks.join(df_stocks_state)
 
-            ## 재무제표 조건에 만족하지 못하는 종목들은 제거
+            # 재무제표 조건에 만족하지 못하는 종목들은 제거
             df_step2 = df_fin.sort_values(by='total_score', ascending=False)
-            df_step2.drop(['Symbol', 'Representative', 'Region',], axis=1, inplace=True)
+
+            ## code , Symbol 이라는 동일 column 을 혼재하여 사용 하고 있으므로, Symbol 만 남김. 23.5.4
+            if 'Symbol' in df_step2.columns:
+                # 'code' 열이 있는 경우 제거
+                if 'code' in df_step2.columns:
+                    df_step2.drop(columns=['code'], inplace=True)
+            else:
+                # 'Symbol' 열이 없는 경우 'code' 열의 이름을 'Symbol'로 변경
+                df_step2.rename(columns={'code': 'Symbol'}, inplace=True)
             # df_step2 = df_fin[df_fin.score_drop == False]
 
-            ## 시간 총액별 그룹을 나눈다. (그룹별 대응 방법이 달라질 수 있음)
+            # 시간 총액별 그룹을 나눈다. (그룹별 대응 방법이 달라질 수 있음)
 
-
-
-            ## 파일 저장
+            # 파일 저장
             now = datetime.now().strftime("%Y-%m-%d")
             file_path = self.file_manager["finance_score"]["path"]
             file_name = self.file_manager["finance_score"]["name"]
             if file_name == "":
                 file_name = f"stock_items_{now}.csv"
-            stu.file_save(df_step2, file_path, file_name, replace=True)
-        else: ## disable step2
+            stu.file_save(df_step2, file_path, file_name, replace=False)
+        else:  # disable step2
             file_path = self.file_manager["finance_score"]["path"]
-            ## 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
+            # 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
             file_name = os.listdir('./data/finance_score/')[0]
             df_step2 = pd.read_csv(file_path + file_name, index_col=0)
 
-
-
-
     ############## internal funct ################
+
     def _make_score(self, score_data, score_list, mode='last'):
         ''' 종벽별 재무제표 값을 스코어 를 만듭니다.
 
@@ -491,26 +468,26 @@ class financeScore:
             score_drop (bool): 조건 미달로 해당 종목 제거 필요 알림
         '''
         # 초기 설정
-        if not mode in ['avg', 'last']:
+        if mode not in ['avg', 'last']:
             _msg = f"mode={mode} 는 지워하지 않습니다. avg, last, 중에 선택해 주세요."
             logger.error(_msg)
-            raise Exception(_msg)
+            raise ValueError(_msg)
 
         score_len = len(score_list)
         if score_list[0] > score_list[1]:
             score_reverse = True
         else:
-            score_reverse= False
+            score_reverse = False
         scores = []
         scores_drop = []
 
         # 데이터 돌려가면서 체크
         for data in score_data:
             data = float(data)
-            for i in range(score_len): #조건문 반복 횟수
-                if score_reverse == True: ## 클수록 높은 점수
-                    if i == (score_len -1) : # last
-                        ## else 가 필요없음. if 들의 범위안에 한번은 포함됨
+            for i in range(score_len):  # 조건문 반복 횟수
+                if score_reverse == True:  # 클수록 높은 점수
+                    if i == (score_len - 1):  # last
+                        # else 가 필요없음. if 들의 범위안에 한번은 포함됨
                         if score_list[i] >= data:
                             scores.append(0)
                             scores_drop.append(True)
@@ -520,7 +497,7 @@ class financeScore:
                             scores.append(tmp)
                             scores_drop.append(False)
                 else:  # 작을수록 높은 점수
-                    if i == score_len -1 : # last
+                    if i == score_len - 1:  # last
                         if score_list[i] <= data:
                             scores.append(0)
                             scores_drop.append(True)
@@ -530,26 +507,23 @@ class financeScore:
                             scores.append(tmp)
                             scores_drop.append(False)
 
-        ## summary
+        # summary
         if mode == 'avg':
             score = math.floor(sum(scores) / len(scores))
             score_drop = any(scores_drop)
-        else: #last
+        else:  # last
             try:
                 score = scores[-1]
                 score_drop = scores_drop[-1]
-            except Exception as e :
-
-                logger.error(e)
-
-
+            except Exception as e:
+                logger.error(f"score_data={score}, 를 저장하는 과정에서 에러가 발생함")
 
         return score, score_drop
 
 
 if __name__ == "__main__":
 
-    ## instance 생성
-    config_file = './config/config.yaml'
-    fs = financeScore(config_file)
+    # instance 생성
+    config_file_path = './config/config.yaml'
+    fs = financeScore(config_file_path)
     fs.run()
