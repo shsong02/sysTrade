@@ -86,7 +86,7 @@ searchStock:
         threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
         threshold_volumecost: 5 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
         shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
-        tracking_stocks: 제이시스메디칼, 코스모신소재, 포스코케미칼, 삼양식품
+        tracking_stocks: 삼성전자 
 
       config:
         change_period : 7 ## days  ## 단기 변동폭 확인용

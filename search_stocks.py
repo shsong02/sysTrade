@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+
+# pylint: disable=logging-fstring-interpolation
+
 import sys
 import requests
 import pandas as pd
@@ -523,7 +526,7 @@ class searchStocks :
 
         buy_dict = dict()
         buy_name = []
-        for cnt, (code, name) in enumerate(zip(df_fin.Code, df_fin.index)):
+        for cnt, (code, name) in enumerate(zip(df_fin.Symbol, df_fin.index)):
             # if cnt >15:
             #     print("SSH TEST")
 
@@ -559,10 +562,12 @@ class searchStocks :
                 turnover = df_fin[df_fin.index == name]['VolumeTurnOver'].values[0]
                 change = df_fin[df_fin.index == name]['Change'].values[0]
                 change_mid = df_fin[df_fin.index == name]['ChangeMid'].values[0]
+
+                # pylint: disable=W1203
                 logger.info(f"Code: {code:<8}, name: {name:<20}, 단기 등락률: {change:<6}, 중기 등락률: {change_mid:<6}, "
                             f"거래대금(억원): {vol_cost:<8}, score : {fi_score:<4}, 거래회전률: {turnover:<8}, "
                             f"섹터: {sector:<20}, 산업: {industry:<20}")
-            except:
+            except Exception:
                 print(f"Code: {code:<8}, name: {name:<15}, score: None -- 스코어를 찾을 수 없습니다.")
 
             # logger.info(f"종목 ({name} - {code}) 의 등락율 차트를 생성합니다.")
@@ -586,7 +591,7 @@ class searchStocks :
         ## 매수 조건이 발생한 종목을 저장 하기
         logger.info(f"\n매수 조건을 만족한 종목을 저장합니다.")
         df_buy = df_fin.loc[buy_name]
-        cols = ["Code", "total_score", "VolumeCost", "Sector", "Industry", "VolumeTurnOver", "Change", "ChangeMid"]
+        cols = ["Symbol", "total_score", "VolumeCost", "Sector", "Industry", "VolumeTurnOver", "Change", "ChangeMid"]
         df_buy = df_buy.loc[:,cols]
 
         ## 파일 저장합니다.
@@ -709,12 +714,12 @@ class searchStocks :
         path = self.file_manager["finance_score"]["path"]
         files = os.listdir(path)
         df_ref = pd.read_csv(path + files[0])  ## 파일이 하나밖에 없음
-        df_ref['Code'] = df_ref['code'].apply(lambda x: str(x).zfill(6))
+        df_ref['Symbol'] = df_ref['Symbol'].apply(lambda x: str(x).zfill(6))
         df_ref.set_index(keys=['Name'], inplace=True)
 
         df_finance = df_close.join(df_ref, how='left')
         df_extra2 = df_extra.join(df_ref, how='left')  ## 추적 주식 관리
-        df_finance.dropna(subset=['total_score', 'Code'], inplace=True)
+        df_finance.dropna(subset=['total_score', 'Symbol'], inplace=True)
         thrd_score = self.params["threshold_finance_score"]
         df_finance2 = df_finance[df_finance.total_score >= thrd_score]
         logger.info(f"재무제표 총점 ({thrd_score}) 기준으로 종목 ({len(df_close)})개 중에 ({len(df_finance2)})개 를 선정합니다.")

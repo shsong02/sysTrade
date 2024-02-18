@@ -3,6 +3,10 @@ import os
 import math
 import time
 from datetime import datetime
+import zipfile
+import requests
+import platform
+from subprocess import check_output
 
 # multi-processing
 from multiprocessing import Pool
@@ -394,7 +398,7 @@ class financeScore:
         ####    STEP2     ####
         ######################
 
-        if params["ena_step2"] == True:
+        if params["ena_step2"] is True:
             df_stocks_state = []
 
             cpu_cnt = 8
@@ -454,6 +458,65 @@ class financeScore:
             df_step2 = pd.read_csv(file_path + file_name, index_col=0)
 
     ############## internal funct ################
+    def get_chrome_version(self):
+        """ chrome 버전을 확인하는 코드. Naver 크롤링 시, chrome dirver 를 사용하기 때문
+        """
+        # macOS의 경우
+        if os.name == 'posix':
+            process = os.popen('/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version')
+            version = process.read().strip().replace('Google Chrome ', '')
+            process.close()
+        # Windows의 경우
+        elif os.name == 'nt':
+            program_files_path = os.getenv('PROGRAMFILES')
+            if os.path.isdir(os.path.join(program_files_path, 'Google/Chrome/Application')):
+                path = os.path.join(program_files_path, 'Google/Chrome/Application/chrome.exe')
+            else:
+                path = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+            version = check_output([path, '--version']).decode().strip().replace('Google Chrome ', '')
+        # Linux의 경우
+        else:
+            version = os.popen('google-chrome --version').read().strip().replace('Google Chrome ', '')
+        return version.split('.')[0]
+
+    def download_chromedriver(self,  version):
+        """ chrome 과 동일한 버전의 chromedriver 를 설치. Naver 크롤링에 사용됨 
+        """
+        # ChromeDriver 다운로드 페이지 URL
+        download_url = f"https://chromedriver.storage.googleapis.com/LATEST_RELEASE_{version}"
+        try:
+            response = requests.get(download_url)
+        except requests.exceptions.RequestException as e: 
+            print("Error connecting to URL", e)
+
+        latest_version = response.text.strip()
+        
+        # macOS ARM 아키텍처 확인
+        if os.name == 'posix' and platform.machine() == 'arm64':
+            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_mac64_m1.zip"
+        # 기존 macOS (Intel 아키텍처)
+        elif os.name == 'posix':
+            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_mac64.zip"
+        # Windows
+        elif os.name == 'nt':
+            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_win32.zip"
+        # Linux
+        else:
+            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_linux64.zip"
+        
+        # ChromeDriver 다운로드 및 압축 해제
+        try:
+            response = requests.get(url)
+            print(response.text)
+        except requests.exceptions.RequestException as e:
+            print(e)
+        zip_file_path = "chromedriver.zip"
+        with open(zip_file_path, 'wb') as file:
+            file.write(response.content)
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+            zip_ref.extractall()  # 현재 디렉토리에 압축 해제
+        os.remove(zip_file_path)  # 다운로드한 zip 파일 삭제
+
 
     def _make_score(self, score_data, score_list, mode='last'):
         ''' 종벽별 재무제표 값을 스코어 를 만듭니다.
@@ -485,7 +548,7 @@ class financeScore:
         for data in score_data:
             data = float(data)
             for i in range(score_len):  # 조건문 반복 횟수
-                if score_reverse == True:  # 클수록 높은 점수
+                if score_reverse is True:  # 클수록 높은 점수
                     if i == (score_len - 1):  # last
                         # else 가 필요없음. if 들의 범위안에 한번은 포함됨
                         if score_list[i] >= data:

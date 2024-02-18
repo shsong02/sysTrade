@@ -1,13 +1,14 @@
-import yaml
-from pykrx import stock
-from pykrx import bond
+# from pykrx import bond
 from datetime import datetime, timedelta
 import pandas as pd
+import yaml
+
+from pykrx import stock
 
 ## html
-import requests
-from bs4 import BeautifulSoup as Soup
-from selenium import webdriver
+# import requests
+# from bs4 import BeautifulSoup as Soup
+# from selenium import webdriver
 
 
 ## local file
@@ -28,10 +29,10 @@ class searchMacro:
         ###########################
         try:
             config_file = './config/config.yaml'  ## 고정값
-            with open(config_file) as f:
+            with open(config_file, encoding='utf-8') as f:
                 config = yaml.load(f, Loader=yaml.FullLoader)
-        except Exception as e :
-            print (e)
+        except Exception as _e :
+            print (_e)
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
 
         ## global 변수 선언
@@ -41,26 +42,40 @@ class searchMacro:
 
     def run(self):
         ## ETF 찾기
-        end_dt = datetime.now()
-        end = end_dt.date().strftime("%Y%m%d")
+        endtime_dt = datetime.now()
+        endtime_str = endtime_dt.date().strftime("%Y%m%d")
 
-        st_dt = end_dt - timedelta(days=self.macro_config["config"]["change_period"])
-        ch_st = st_dt.date().strftime("%Y%m%d")
+        sttime_dt = endtime_dt - timedelta(days=self.macro_config["config"]["change_period"])
+        sttime_str = sttime_dt.date().strftime("%Y%m%d")
 
-        tickers = stock.get_etf_ticker_list(end)
+        tickers = stock.get_etf_ticker_list(endtime_str)
         names = []
         for ticker in tickers:
             name = stock.get_etf_ticker_name(ticker)
             names.append(name)
 
-        df = pd.DataFrame(columns=['Code', 'Name'])
-        df['Code'] = tickers
-        df['Name'] = names
-        df.set_index(keys=['Code'], inplace=True, drop=True)
+        df_symbol = pd.DataFrame(columns=['Symbol', 'Name'])
+        df_symbol['Symbol'] = tickers
+        df_symbol['Name'] = names
+        df_symbol.set_index(keys=['Symbol'], inplace=True, drop=True)
 
-        ## 종목명 추가하기
-        df_tot = stock.get_etf_price_change_by_ticker(ch_st, end)
-        df_tot = df_tot.join(df)
+        ## etf 데이터를 가져올 때까지 이전날짜 로 불러오기 
+        tries = 0 
+        max_tries = 10
+        while tries < max_tries:
+            try:
+                df_tot = stock.get_etf_price_change_by_ticker(sttime_str, endtime_str)
+                break
+            except Exception:
+                print("TEST")
+                endtime_dt -= timedelta(days=1)
+                endtime_str = endtime_dt.date().strftime("%Y%m%d")
+
+                sttime_dt -= timedelta(days=1)
+                sttime_str = sttime_dt.date().strftime("%Y%m%d")
+                tries += 1
+                print(sttime_str, endtime_str)
+        df_tot = df_tot.join(df_symbol)
         df_tot.rename(columns={'시가': 'Open',
                                '종가': 'Close',
                                '거래량': 'Volume',
@@ -90,8 +105,8 @@ class searchMacro:
         cm = tradeStrategy('./config/config.yaml')
         cm.display = 'on'
 
-        st_dt = end_dt - timedelta(days=self.macro_config["config"]["chart_period"])
-        st = st_dt.date().strftime("%Y%m%d")
+        sttime_dt = endtime_dt - timedelta(days=self.macro_config["config"]["chart_period"])
+        sttime_chart_str = sttime_dt.date().strftime("%Y%m%d")
 
         ## 국내 시장 걸러보기
         ex_names = ["200선물", "코스닥"]
@@ -111,7 +126,7 @@ class searchMacro:
                 continue
 
             ## chart 준비
-            df_ohlcv = stock.get_etf_ohlcv_by_date(ch_st, end, code)
+            df_ohlcv = stock.get_etf_ohlcv_by_date(sttime_chart_str, endtime_str, code)
             df_ohlcv.rename(columns={'시가': 'Open',
                                      '고가': 'High',
                                      '저가': 'Low',
@@ -123,8 +138,10 @@ class searchMacro:
                                      '기초지수': 'BaseCost',
                                      }, inplace=True)
 
-            logger.info(f"[수익률: {round(change)} %] ETF ({name}, {code})의 Chart 를 생성합니다.  (수익률 기간: {ch_st} ~ {end})")
-            cm.run(code, name, data=df_ohlcv, dates=[st, end], mode='etf')
+            logger.info(f"[수익률: {round(change)} %] ETF ({name}, {code})의 Chart 를 생성합니다.  (수익률 기간: {sttime_str} ~ {endtime_str})")
+            df_chart = cm.run(code, name, data=df_ohlcv, dates=[sttime_chart_str, endtime_str], mode='etf')
+
+            df_chart.to_csv(f"{self.file_manager['chart']}/{code}.csv", index=False)
 
 
 if __name__ == "__main__":
