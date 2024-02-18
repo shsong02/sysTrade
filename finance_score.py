@@ -44,8 +44,8 @@ except Exception as e:
 ####    로그 생성    #######
 logger = stu.create_logger()
 
-## Chrome Driver path 를 지정해줌,  TODO: 드라이버 버전 업데이트 해당 위치에 카피 하기
-driver_path = "/usr/local/bin/chromedriver"
+# ## Chrome Driver path 를 지정해줌,  TODO: 드라이버 버전 업데이트 해당 위치에 카피 하기
+# driver_path = "/usr/local/bin/chromedriver"
 
 
 class financeScore:
@@ -63,6 +63,8 @@ class financeScore:
         self.param_init = config["mainInit"]
         self.score_rule = config["scoreRule"]
         # self.keys = config["keyList"]
+
+        self.driver_path = None
 
     def finance_state(self, code_name, mode='quarter',):
         """종목 코드에 대한 재무제표를 가져옵니다.
@@ -97,7 +99,7 @@ class financeScore:
 
         opt = webdriver.ChromeOptions()
         opt.add_argument('headless')
-        driver = webdriver.Chrome(options=opt, executable_path=driver_path)
+        driver = webdriver.Chrome(options=opt, executable_path=self.driver_path)
 
         code = str(code).zfill(6)
         # 네이버 재무재표 주소
@@ -309,19 +311,6 @@ class financeScore:
 
         return df_out
 
-    # def load_stock_data(self, code, date, display=False):
-    #     df = fdr.DataReader(code, date[0], date[1])
-
-    #     file_name = f"stock_data_{code}_{date[0]}_{date[1]}.csv"
-    #     ## 파일로 저장 합니다.
-    #     self._file_save(df, self.file_manager["stock_data"]["path"], file_name)
-
-    #     if display == True:
-    #         fdr.chart.plot(df)
-    #     pass
-
-    #     return df.reset_index()
-
     def run(self):
         # 거래소 모든 코드 가져오기
         '''
@@ -343,7 +332,10 @@ class financeScore:
         ####    STEP1     ####
         ######################
         # 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
-        krx = fdr.StockListing('KRX')
+        # krx = fdr.StockListing('KRX-DESC')
+        # 가끔 한국거래소에 서버점검 등의 이슈가 있어 fdr.StockListing 으로 상장종목을 받아오지 못할 때가 있습니다.
+        # 그럴 때는 아래의 주석을 해제하고 실습해 주세요!
+        krx = pd.read_csv("https://raw.githubusercontent.com/corazzon/finance-data-analysis/main/krx.csv")
         # 섹터값없는 코드 삭제 (ETF...)
         df_stocks = krx.dropna(axis=0, subset=['Sector'])
         df_stocks.drop(['Representative','Region',], axis=1, inplace=True)
@@ -407,14 +399,16 @@ class financeScore:
             opt = webdriver.ChromeOptions()
             opt.add_argument('headless')
             drivers = []
-            # chromedriver 버전 이슈 발생 시 명령어로 설치:
-            #   chrome brew install cask chromedriver
-            #   brew upgrade
-            # 버전 확인 -> chromedriver -version
+
+            ## Naver 크롤링 하기 위해 chrome 최신 드라이버 설치 
+            chrome_version = self.get_chrome_version()
+            self.driver_path = self.download_chromedriver(chrome_version)
+            print(f"ChromeDriver for Chrome version {chrome_version} has been downloaded and installed.")
+
             # pylint: disable= W0612
             for i in range(cpu_cnt):
                 drivers.append(webdriver.Chrome(
-                    options=opt, executable_path=driver_path))
+                    options=opt, executable_path=self.driver_path))
 
             codes = df_stocks['Symbol'].to_list()
             names = df_stocks['Name'].to_list()
@@ -477,37 +471,30 @@ class financeScore:
         # Linux의 경우
         else:
             version = os.popen('google-chrome --version').read().strip().replace('Google Chrome ', '')
-        return version.split('.')[0]
+
+        print(f"chrome version (current): {version}")
+        return version
 
     def download_chromedriver(self,  version):
         """ chrome 과 동일한 버전의 chromedriver 를 설치. Naver 크롤링에 사용됨 
         """
-        # ChromeDriver 다운로드 페이지 URL
-        download_url = f"https://chromedriver.storage.googleapis.com/LATEST_RELEASE_{version}"
-        try:
-            response = requests.get(download_url)
-        except requests.exceptions.RequestException as e: 
-            print("Error connecting to URL", e)
-
-        latest_version = response.text.strip()
         
         # macOS ARM 아키텍처 확인
         if os.name == 'posix' and platform.machine() == 'arm64':
-            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_mac64_m1.zip"
+            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/mac-arm64/chromedriver-mac-arm64.zip"
         # 기존 macOS (Intel 아키텍처)
         elif os.name == 'posix':
-            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_mac64.zip"
+            url =f"https://storage.googleapis.com/chrome-for-testing-public/{version}/mac-x64/chromedriver-mac-x64.zip"
         # Windows
         elif os.name == 'nt':
-            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_win32.zip"
+            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/linux64/chromedriver-linux64.zip"
         # Linux
         else:
-            url = f"https://chromedriver.storage.googleapis.com/{latest_version}/chromedriver_linux64.zip"
+            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/win64/chromedriver-win64.zip"
         
         # ChromeDriver 다운로드 및 압축 해제
         try:
             response = requests.get(url)
-            print(response.text)
         except requests.exceptions.RequestException as e:
             print(e)
         zip_file_path = "chromedriver.zip"
@@ -515,7 +502,34 @@ class financeScore:
             file.write(response.content)
         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
             zip_ref.extractall()  # 현재 디렉토리에 압축 해제
+            extracted_files = zip_ref.namelist()  # 압축 해제한 파일 목록 가져오기
+        
+        for extracted_file in extracted_files:
+            # 파일 또는 디렉토리의 전체 경로 구성
+            extracted_path = os.path.join(os.getcwd(), extracted_file)
+            # 권한 변경
+            os.chmod(extracted_path, 0o755)
+
         os.remove(zip_file_path)  # 다운로드한 zip 파일 삭제
+
+        ## driver 를 PATH 에 추가 
+        ########################
+        # 현재 작업 디렉토리 경로 구하기
+        current_working_directory = os.getcwd()
+    
+        # chromedriver 경로 설정 (현재 작업 디렉토리 내의 chromedriver-mac-arm64)
+        chromedriver_path = os.path.join(current_working_directory, 'chromedriver-mac-arm64/chromedriver')
+    
+        # PATH 환경 변수에 chromedriver 경로 추가
+        if chromedriver_path not in os.environ['PATH']:
+            os.environ['PATH'] += os.pathsep + chromedriver_path
+            print("Chromedriver path added to PATH.")
+        else:
+            print("Chromedriver path is already in PATH.")
+    
+        # 현재 PATH 환경 변수 출력 (확인용)
+        print(f"Current PATH: {os.environ['PATH']}")
+        return chromedriver_path
 
 
     def _make_score(self, score_data, score_list, mode='last'):
