@@ -94,17 +94,46 @@ class tradeStrategy:
 
             ## advanced 정보 (일자별 PER, ..)
             df_chart2 = stock.get_market_fundamental(dates[0], dates[1], code, freq='d')
-            df_out = df.join(df_chart2)
+            if len(df_chart2) == 0 :  ## api 가 처리 못하는 ticker 일 경우 대응
+                cols = ['BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
+                df_chart2[cols] = 0  # empty
+                df_out = df.join(df_chart2)
+                df_out.fillna(0, inplace=True)
+
+            else:
+                df_out = df.join(df_chart2)
 
             ##일자별 시가 총액 (시가총액, 거래량, 거래대금, 상장주식수)
             df_chart3 = stock.get_market_cap(dates[0], dates[1], code)
             df_out = df_out.join(df_chart3)
 
-            ##일자별 외국인 보유량 및 외국인 한도소진률
-            df_chart4 = stock.get_exhaustion_rates_of_foreign_investment(dates[0], dates[1], code)
-            df_chart4.drop(['상장주식수', '한도수량', '한도소진률' ], axis=1, inplace=True)  ## 중복
-            df_chart4.rename(columns={'보유수량': '외국인_보유수량',  '지분율':'외국인_지분율'}, inplace=True)
+            ## 투자자별 거래량 (누적 순매수를 계산)
+            df_chart4 = stock.get_market_trading_volume_by_date(dates[0], dates[1], code)
+            df_chart4['VolumeOrgan'] = 0
+            df_chart4['VolumeForeign'] = 0
+            df_chart4['VolumeEtc'] = 0
+            df_chart4['VolumePersonal'] = 0
+            for cnt, idx in enumerate(df_chart4.index):
+                if cnt == 0 :
+                    df_chart4.at[idx, 'VolumeOrgan']     = df_chart4.at[idx, '기관합계']
+                    df_chart4.at[idx, 'VolumeEtc']       = df_chart4.at[idx, '기타법인']
+                    df_chart4.at[idx, 'VolumePersonal']  = df_chart4.at[idx, '개인']
+                    df_chart4.at[idx, 'VolumeForeign']   = df_chart4.at[idx, '외국인합계']
+                else:
+                    df_chart4.at[idx, 'VolumeOrgan']     = df_chart4.at[idxp, 'VolumeOrgan']    +  df_chart4.at[idx, '기관합계']
+                    df_chart4.at[idx, 'VolumeEtc']       = df_chart4.at[idxp, 'VolumeEtc']      + df_chart4.at[idx, '기타법인']
+                    df_chart4.at[idx, 'VolumePersonal']  = df_chart4.at[idxp, 'VolumePersonal'] + df_chart4.at[idx, '개인']
+                    df_chart4.at[idx, 'VolumeForeign']   = df_chart4.at[idxp, 'VolumeForeign']  + df_chart4.at[idx, '외국인합계']
+
+                idxp = idx
+
             df_out = df_out.join(df_chart4)
+
+            ##일자별 외국인 보유량 및 외국인 한도소진률
+            df_chart4_2 = stock.get_exhaustion_rates_of_foreign_investment(dates[0], dates[1], code)
+            df_chart4_2.drop(['상장주식수', '한도수량', '한도소진률' ], axis=1, inplace=True)  ## 중복
+            df_chart4_2.rename(columns={'보유수량': '외국인_보유수량',  '지분율':'외국인_지분율'}, inplace=True)
+            df_out = df_out.join(df_chart4_2)
 
             ## 공매도 정보
             df_chart5 = stock.get_shorting_balance_by_date(dates[0], dates[1], code)
@@ -239,7 +268,8 @@ class tradeStrategy:
             pannel_id = {
                 'volume':   2,
                 'krx':      3,
-                'krxComp':  4,
+                'investor':  4,
+                # 'krxComp':  4,
                 'maDist':    5,
                 # 'maDistPos': 5,
                 # 'rsi':      4,
@@ -264,14 +294,17 @@ class tradeStrategy:
                     mpf.make_addplot(df_out['VolumeAnomaly'], type='scatter', marker='v', markersize=200, color='red',
                                      panel=pannel_id['volume']),
 
-                    mpf.make_addplot(df_out['공매도잔고'], ylabel='Short Selling', color='black',
-                                     panel=pannel_id['short']),
-
                     ## krx
                     mpf.make_addplot(df_krx2['Close'], ylabel='Kospi 200', color='#8c564b', panel=pannel_id['krx']),
 
-                    ## krx
-                    mpf.make_addplot(df_out['compChangeAcc'], ylabel='compare with krx', color='#8c564b', panel=pannel_id['krxComp']),
+                    # ## krx
+                    # mpf.make_addplot(df_out['compChangeAcc'], ylabel='compare with krx', color='#8c564b', panel=pannel_id['krxComp']),
+
+                    # investor
+                    mpf.make_addplot(df_out['VolumeForeign'], ylabel='Investor (frgn:bl, org:b, prsl:y, etc:sb', color='black', panel=pannel_id['investor']),
+                    mpf.make_addplot(df_out['VolumePersonal'], secondary_y=False, color='yellow', panel=pannel_id['investor']),
+                    mpf.make_addplot(df_out['VolumeOrgan'], secondary_y=False, color='blue', panel=pannel_id['investor']),
+                    mpf.make_addplot(df_out['VolumeEtc'], secondary_y=False, color='#2cb7f2', panel=pannel_id['investor']),
 
                     ## ma 거리차
                     mpf.make_addplot(df_out['ma520Dist'], ylabel='Distance(ma5 - ma20)', color='#8c564b', panel=pannel_id['maDist']),
@@ -298,6 +331,9 @@ class tradeStrategy:
                     ## for
                     mpf.make_addplot(df_out['외국인_지분율'], ylabel='Foreign ratio', color='black', panel=pannel_id['foreign']),
 
+                    ## short
+                    mpf.make_addplot(df_out['공매도잔고'], ylabel='Short Selling', color='black',
+                                     panel=pannel_id['short']),
 
                     # macd
                     # mpf.make_addplot((macd['macd']), color='#606060',ylabel='MACD', secondary_y=False,  panel=pannel_id['macd'] ),
@@ -630,7 +666,7 @@ class tradeStrategy:
         df['ma520DistChange'] = temp
         df['ma520DistChangeInv'] = temp2
 
-        chk1 = False
+        pos_cond1 = False
         chk1HoldCnt = 0
         buy_times = []  ## 매수 시점 기록
         buy_costs = []  ## 매수 시점 가격 (수익률 계산용)
@@ -702,19 +738,19 @@ class tradeStrategy:
                         # 전략1:  조건1 과 조건 2, 를 만족하는 경우
                         buy_times.append(True)
                         buy_costs.append(df.Close.at[idx])
-                        chk1 = False
+                        pos_cond1 = False
                         chk1HoldCnt = 0  ## 리프레쉬 되면 카운트 다시 시작
                         # print(f"매수 신호(date:{idx}): 당일 등락율 ({currChange}),  장기 증가 추세율 ({ma00chg}) ")
                     else:
                         buy_times.append(False)
                         buy_costs.append(0)
-                        chk1 = False
+                        pos_cond1 = False
                         chk1HoldCnt = 0  ## 리프레쉬 되면 카운트 다시 시작
                 else:
                     # 전략2:  조건2를 만족하지 못했지만 상승 가능성이 있기 때문에 다음 상승 추세로 유보한다.
                     buy_times.append(False)
                     buy_costs.append(0)
-                    chk1 = True
+                    pos_cond1 = True
                     chk1HoldCnt = 0  ## 리프레쉬 되면 카운트 다시 시작
 
             else:
@@ -722,37 +758,6 @@ class tradeStrategy:
 
                 buy_times.append(False)
                 buy_costs.append(0)
-
-                # if chk1 == True:
-                #     # 2) 조건3: 중심(ma5) 회귀 후 벌어지는 시점
-                #     if df.ma520DistChange.at[idx] == True:
-
-                #         # 전략2:  조건2를 만족하지 못했지만, 조건3 로 다시 기회 확인
-                #         if ma00chg >= buyCond3_2:
-                #             buy_times.append(True)
-                #             buy_costs.append(df.Close.at[idx])
-                #             chk1HoldCnt = 0
-                #             chk1 = False
-                #         else:
-                #             buy_times.append(False)
-                #             buy_costs.append(0)
-                #             chk1HoldCnt += 1
-                #             chk1 = True
-                #     else:
-                #         # 예외1: 전략2 를 기달하지만, 시간이 오래 걸릴 경우 포기함
-                #         if(chk1HoldCnt >= hold_period):  ## 7일 이상되면 무효됨
-                #             buy_times.append(False)
-                #             buy_costs.append(0)
-                #             chk1HoldCnt = 0
-                #             chk1 = False
-                #         else:
-                #             buy_times.append(False)
-                #             buy_costs.append(0)
-                #             chk1HoldCnt += 1
-                #             chk1 = True
-                # else:
-                #     buy_times.append(False)
-                #     buy_costs.append(0)
 
         df['finalBuy'] = buy_times ## 매도에서 사용
 
@@ -762,22 +767,58 @@ class tradeStrategy:
         #######################################
         ###       매도 타이밍 정리
         #######################################
-
+        '''
+            긍정 전략1: 20% 수익률이면 팔기 
+            긍정 전략2: 수익률이 절반이 되는 시점 팔기 
+            긍정 전략3: 전고점이면 팔기 
+            
+            부정 전략1: 손실 시, 저항선이면 팔기 
+            부정 전략2: 손실 시, 10% 면 팔기 
+            부정 전략3:  
+        '''
         # cofig 값
         config_profit_change = self.trade_config["sell_condition"]["default_profit_change"]
         config_holding_days = self.trade_config["sell_condition"]["default_holding_days"]
+        target_ratio = 20
 
-        chk1 = False
-        chk2 = False
-        chk3 = False
+        ## 매물대 확인
+        volCnt = 20
+        df_volProf = pd.cut(df.Close, volCnt)
+        df_volProf2 = df.groupby(df_volProf)
+        close_dict = dict()
+        acc = 0
+        for grp in df_volProf2:
+            key = list(grp)[0]
+            df_part = list(grp)[1]
+            closeVol = df_part.Close * df_part.Volume
+            close_dict[key] = closeVol.sum()
+            acc += closeVol.sum()
+        ## 매물대 별 비율 구하기
+        for key, val in close_dict.items():
+            a = round(val / acc * 100, 2)
+            close_dict[key] = a
+
+            _msg = f"[매물대] {key}: {a} %"
+            print(_msg)
+        ## 매물대 출력
+
         sell_times = []
         sell_qnty = []
         buy_qnty = 0
-        hold_time = 0 # 구매하고 유지한 기간
         ma5Pos_que = [0,0,0,0,0,0,0]
+        acc_porf = 0
+        profit_ratio_max = 0 ## 매수 이후 수익률 최대값
         for cnt, idx in enumerate(df.index):
+            close_cur = df.Close.at[idx]
             ma5PosCrr = df.ma5Pos.at[idx]
 
+            ## 초기 10일 스킵
+            if cnt < 10 :
+                sell_times.append(False)
+                sell_qnty.append(0)
+                continue
+
+            ## 매수 시점
             if buy_times[cnt]:
                 if buy_qnty == 0:
                     buy_cost = buy_costs[cnt]  ## 첫 구매 시점의 가격을 기록. 수익률 계산용
@@ -788,67 +829,108 @@ class tradeStrategy:
             ## 매수조건이 남아 있을 때만 매도 가능
             if buy_qnty > 0 :
                 # 상승률 계산
-                profit_ratio = self._change_ratio(df.Close.at[idx], buy_cost)
+                profit_ratio = self._change_ratio(close_cur, buy_cost)
+                if profit_ratio_max < profit_ratio:
+                    profit_ratio_max = profit_ratio
+                ## 단기간 데이터 준비
+                # if cnt < 20:  # 20일 안에서 최대값 계산
+                #     df_part = df.iloc[:cnt, :]
+                # else:
+                #     df_part = df.iloc[cnt - 20:cnt, :]
 
-                # 조건1: 장대 음봉 나오면 매도
-                if df.CloseRatio.at[idx] < -5 :  ## bol 상단 찍을려면 무조건 강한 상승 필요. 즉 exclusive 함
-                    chk1 = True
-                else:
-                    chk1 = False
-                if chk1 == True:  # 다음날 바로 매도
-                    chk1= False
-                    sell_times.append(True)
-                    sell_qnty.append(buy_qnty)
-                    hold_time = 0
-                    buy_qnty = 0 # 전량 매도
-                    continue
-
-                # 조건2: 수익률 특정값 이상인 경우
-                if profit_ratio > config_profit_change :
-                    sell_times.append(True)
-                    sell_qnty.append(buy_qnty)
-                    hold_time = 0
-                    buy_qnty = 0 # 전량 매도
-                else:
-                    # print(profit_ratio)
-                    if config_holding_days <= hold_time:
+                ## SSH(22.12) 매도 시점 디버깅 용도
+                # print(f"SSH 상승률 확인({idx}): {profit_ratio}, 최대 수익률: {profit_ratio_max}")
+                if (close_cur >= buy_cost):  ## 종가 기준 수익 구간
+                    # 조건1: 수익 20프로 이상이면 매도
+                    if profit_ratio >= target_ratio :
                         sell_times.append(True)
                         sell_qnty.append(buy_qnty)
-                        hold_time = 0
+                        acc_porf += profit_ratio * buy_qnty
+                        _msg = f"[BUY_POS1] 수익률이 ({target_ratio})% 이상일 경우 매도함.(수익률(매수 {buy_qnty}회): {profit_ratio}%)(매도일: {idx})"
+                        buy_qnty = 0 # 전량 매도
+                        print(_msg)
+
+                    # 조건2: 매수 이후 최대 수이률에서 절반이 되는 시점
+                    elif (profit_ratio_max > 10) and (profit_ratio < profit_ratio_max / 2):
+                        sell_times.append(True)
+                        sell_qnty.append(buy_qnty)
+                        acc_porf += profit_ratio * buy_qnty
+                        _msg = f"[BUY_POS2] 당일 종가가 20일 내 최대 값 대비 절반 이하일 경우 매도함. (수익률(매수 {buy_qnty}회): {profit_ratio}%)(매도일: {idx})"
                         buy_qnty = 0  # 전량 매도
+                        print(_msg)
+
+                    # 조건3: 매물대에 도달할 경우 판매 (최대 수익률이 5% 이후부터 동작)
                     else:
-                        sell_times.append(False)
-                        sell_qnty.append(0)
-                        hold_time += 1
+                        chk=False
+                        for key, value in close_dict.items():
+                            if close_cur in key:  # 내가 속한 값 범위 확인
+                                if value > 10 : # 이때, 매물대가 10% 이상일 경우
+                                    chk=True
+                        if (chk==True) and (profit_ratio_max>5):
+                            sell_times.append(True)
+                            sell_qnty.append(buy_qnty)
+                            acc_porf += profit_ratio * buy_qnty
+                            _msg = f"[BUY_POS3] 손실 시, 저지대를 돌파한 경우 (수익률(매수 {buy_qnty}회): {profit_ratio}%)(매도일: {idx})"
+                            buy_qnty = 0  # 전량 매도
+                            print(_msg)
+                        else:
+                            sell_times.append(False)
+                            sell_qnty.append(0)
 
-                # # 조건1: ma5 가 ma20 을 한번이라도 하향한적 있음
-                # if df.ma520Dist.at[idx] <= 0:
-                #     chk1 = True
-                # else:
-                #     chk1 = False
 
-                # if chk1 == True:
-                #     # 조건2: ma5 가 상승에서 하락으로 변경되는 시점
-                #     if (ma5PosCrr == False) and (ma5Pos_que[-1] == True):
-                #         sell_times.append(True)
-                #         sell_qnty.append(buy_qnty)
-                #         buy_qnty = 0  # 전량 매도
-                #         chk1 = False  # reset
-                #     else:
-                #         sell_times.append(False)
-                #         sell_qnty.append(0)
-                # else:  # chk1 = False
-                #     sell_times.append(False)
-                #     sell_qnty.append(0)
+                else: # 종가 기준 손실 구간
+                    # 조건4: 손실 시, 지지선을 돌파하면 매도
+                    if (close_cur < buy_cost) and (close_cur < close_prev):  ## 손실 발생, 2일차부터 가능
+                        chk = False
+                        for key, value in close_dict.items():
+                            if (close_prev in key) and (close_cur not in key): # 매물대 하향 돌파
+                                if value > 10:  # 어제 종가가 매물대에 머물러 있었던 상태
+                                    chk = True
+                        if chk:
+                            sell_times.append(True)
+                            sell_qnty.append(buy_qnty)
+                            acc_porf += profit_ratio * buy_qnty
+                            _msg = f"[BUY_NEG1] 손실 시, 저지대를 돌파한 경우 (수익률(매수 {buy_qnty}회): {profit_ratio}%)(매도일: {idx})"
+                            buy_qnty = 0  # 전량 매도
+                            print(_msg)
+                        else:
+                            sell_times.append(False)
+                            sell_qnty.append(0)
+
+                    # 조건5:  손실 시, 손실액이 매수가에 10% 면 팔기
+                    else:
+                        if (close_cur < buy_cost):  ## 손실 발생,
+                            profit_ratio = self._change_ratio(close_cur, buy_cost)
+                            if profit_ratio < -10:
+                                sell_times.append(True)
+                                sell_qnty.append(buy_qnty)
+                                acc_porf += profit_ratio * buy_qnty
+                                _msg = f"[BUY_NEG2] 손실률이 (10% 이상)일 경우 손절 (수익률(매수 {buy_qnty}회): {profit_ratio}%)(매도일: {idx})"
+                                buy_qnty = 0  # 전량 매도
+                                print(_msg)
+                            else:
+                                sell_times.append(False)
+                                sell_qnty.append(0)
+                        else: # 아무일도 일어나지 않음
+                            sell_times.append(False)
+                            sell_qnty.append(0)
             else: # buy_qnty < 0
                 sell_times.append(False)
                 sell_qnty.append(0)
 
+                # 매수한 적이 없으면 수익률을 0 으로 초기화 함
+                profit_ratio_max = 0
+
             ma5Pos_que.append(ma5PosCrr)
             ma5Pos_que.pop(0)
 
+            close_prev = close_cur
+
+        _msg = f"총 수익률은 {acc_porf}% 입니다. 동일 금액으로 매수하고, 매수 누적시  처음 매수시점 기준으로 계산됨. "
+        print(_msg)
+        print("\n")
         df['finalSell'] = sell_times
-        df['finalSellQnty'] = sell_times
+        df['finalSellQnty'] = sell_qnty
 
         ##################################
         ####   Chart 에 표식 남기기
@@ -863,18 +945,18 @@ class tradeStrategy:
         # pntDict['volAnomaly'] = dict()
         # pntDict['volAnomaly']['data'] = df_out[df_out.VolumeAnomaly.notnull()].index.to_list() ## 거래량 증가 시점
         # pntDict['volAnomaly']['color'] = '#f29c2c'  # 오렌지
-        pntDict['bolBuy'] = dict()
-        pntDict['bolBuy']['data'] = df[df.finalBuyTest0 == True].index.to_list() ## bol 기준으로 buy 시점
-        pntDict['bolBuy']['color'] = '#66ff33'  ## 밝은 녹색
+        # pntDict['bolBuy'] = dict()
+        # pntDict['bolBuy']['data'] = df[df.finalBuyTest0 == True].index.to_list() ## bol 기준으로 buy 시점
+        # pntDict['bolBuy']['color'] = '#66ff33'  ## 밝은 녹색
         # pntDict['bolSell'] = dict()
         # pntDict['bolSell']['data'] = df[df.bolSell == True].index.to_list() ## bol 기준으로 sell 시점
         # pntDict['bolSell']['color'] = '#0d3300'  ## 진한 녹색
         pntDict['maBuy'] = dict()
         pntDict['maBuy']['data'] = df[df.finalBuy == True].index.to_list() ## bol 기준으로 sell 시점
         pntDict['maBuy']['color'] = '#ff33bb'  ## 핑크 계열
-        pntDict['maBuyTest1'] = dict()
-        pntDict['maBuyTest1']['data'] = df[df.finalBuyTest1 == True].index.to_list() ## bol 기준으로 sell 시점
-        pntDict['maBuyTest1']['color'] = '#e60000'  ## 보라색 계열
+        # pntDict['maBuyTest1'] = dict()
+        # pntDict['maBuyTest1']['data'] = df[df.finalBuyTest1 == True].index.to_list() ## bol 기준으로 sell 시점
+        # pntDict['maBuyTest1']['color'] = '#e60000'  ## 보라색 계열
         pntDict['maSell'] = dict()
         pntDict['maSell']['data'] = df[df.finalSell == True].index.to_list() ## bol 기준으로 sell 시점
         pntDict['maSell']['color'] = '#002080'  ## 진파랑 계열

@@ -623,7 +623,8 @@ class searchStocks :
             last_d = str(df.at[name,'buy_day'])
             hold_d = str(df.at[name,'buy_hold_day'])
             earn = str(df.at[name,'priceEarning'])
-            logger.info(f"종목명 (매수조건 만족) :{name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d} , 당일까지 수익률: {earn}%")
+            code = str(df.at[name,'Code'])
+            logger.info(f"종목명 (매수조건 만족): ({code}){name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d:<25} , 당일까지 수익률: {earn}%")
 
         ## 폴더 생성
         base_path = self.file_manager["monitor_stocks"]["path"]
@@ -686,12 +687,22 @@ class searchStocks :
             if len(df) == 0:
                 logger.error(f"입력한 종목명들을 찾을 수 없습니다. (종목명: {name_list})")
                 sys.exit()
+        # 0) 예외 종목 추려놓기
+        names = self.params["tracking_stocks"]
+        names = names.split(',')
+        name2 = list(filter(None, names))
+        trck_name = []
+        for n in name2:
+            trck_name.append(n.replace(' ', ''))  ## 공백제거
+
+        df_extra = df.loc[trck_name]
 
         # 1) 조건1: 종가 최소 값 으로 cut
         thrd_close = self.params["threshold_close"]
         df_close = df[df.Close > thrd_close]
         logger.info(
             f"종가 ({thrd_close} 원) 보다 낮은 종믁 제거로,  전체 ({len(df)}) 개 중에 ({len(df_close)}))개 를 선정합니다.")
+
 
         # 2) 조건2:  finance score 이상인 경우에만 해당
         # 제무 스코어 불러오기
@@ -702,6 +713,7 @@ class searchStocks :
         df_ref.set_index(keys=['Name'], inplace=True)
 
         df_finance = df_close.join(df_ref, how='left')
+        df_extra2 = df_extra.join(df_ref, how='left')  ## 추적 주식 관리
         df_finance.dropna(subset=['total_score', 'Code'], inplace=True)
         thrd_score = self.params["threshold_finance_score"]
         df_finance2 = df_finance[df_finance.total_score >= thrd_score]
@@ -721,13 +733,16 @@ class searchStocks :
         df_mid_price.set_index('Name', drop=True, inplace=True)
 
         name_list = df_finance2.index.to_list()
-        df_mid_price = df_mid_price.loc[name_list,:]  ## 상승추세를 확인하기 위해 준비
+        name_extra_list = df_extra2.index.to_list()
+        df_mid_price2 = df_mid_price.loc[name_list,:]  ## 상승추세를 확인하기 위해 준비
+        df_extra2_2 = df_mid_price.loc[name_extra_list,:]  ## 추가
 
 
         thrd_trend = self.params["threshold_min_trend"]
-        name_list = df_mid_price[df_mid_price.Change > thrd_trend].index.to_list()
+        name_list = df_mid_price2[df_mid_price2.Change > thrd_trend].index.to_list()
         df_trend = df_finance2.loc[name_list,:]  ## 상승추세를 확인하기 위해 준비
-        df_trend['ChangeMid'] = df_mid_price['Change']
+        df_trend['ChangeMid'] = df_mid_price2['Change']
+        df_extra2['ChangeMid'] = df_extra2_2['Change']
         logger.info(
             f"({self.config['trend_period']})일간  ({thrd_trend})% 보다 높게 상승한 기준으로 종목 ({len(df_finance2)})개 중에 ({len(df_trend)})개 를 선정합니다.")
 
@@ -762,9 +777,17 @@ class searchStocks :
         thrd_shortselling = self.params["shortselling_sort_count"]
         df_shtsell = df_vcost.sort_values(by='VolumeTurnOver', ascending=False).head(thrd_shortselling)
         logger.info(
-            f"거래 회전률이 많은 순으로 상위 ({thrd_shortselling})개 목표로, 종목 ({len(df_vcost)})개 중에 ({len(df_shtsell)})개 를 선정합니다.\n\n")
+            f"거래 회전률이 많은 순으로 상위 ({thrd_shortselling})개 목표로, 종목 ({len(df_vcost)})개 중에 ({len(df_shtsell)})개 를 선정합니다.")
 
         df_out = df_shtsell
+
+        # 7) 추척이 필요한 종목을 추가 한다.
+        df_out = pd.concat([df_out, df_extra2], axis=0)
+        df_out.drop_duplicates(inplace=True)
+        logger.info(
+            f"추적이 필요한 종목  ({len(df_extra2)})개를 더하여, 종목 ({len(df_shtsell)})개에서 ({len(df_out)})개 (중복제거)로 더합니다. \n\n")
+
+
 
         return df_out
 

@@ -33,6 +33,12 @@ import torch
 from tools.news_crawler import newsCrawler
 from tools import st_utils as stu
 
+## log 폴더 생성
+try:
+    if not os.path.exists("./log"):
+        os.makedirs("./log")
+except Exception as e :
+    print(e)
 ## set logger
 logger = stu.create_logger()
 

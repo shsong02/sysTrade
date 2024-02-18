@@ -27,9 +27,16 @@ from tools import st_utils as stu
 client_id = '2CtLswBVpo1hvrIY9O_5'
 client_secret = 'odSWUOS7VY'
 
+from tools import st_utils as stu
+
+## log 폴더 생성
+try:
+    if not os.path.exists("./log"):
+        os.makedirs("./log")
+except Exception as e :
+    print(e)
 ## set logger
 logger = stu.create_logger()
-
 
 class newsCrawler:
     def __init__(self):

@@ -59,14 +59,15 @@ class systemTrade:
         ## global 변수 선언
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
-        self.trade_config = config["tradeStock"]
-
-        self.trade_kospi = config["tradeStock"]["kospi"]["control"]
 
         ##### 초기 변수 설정
         ## 스케쥴링 하기 위해서 시간 간격을 생성
-        self.mon_intv = self.trade_config["scheduler"]["interval"]  # minutes  (max 30 min.)
-        self.trade_target = self.trade_config["scheduler"]["target"]
+        self.trade_schedule = config["tradeStock"]["scheduler"]
+        self.trade_config = config["tradeStock"]["config"]
+
+        self.mon_intv           = self.trade_schedule["interval"]  # minutes  (max 30 min.)
+        self.trade_target       = self.trade_schedule["target"]
+        self.mode               = self.trade_schedule["mode"] ## real, backfill, kospi
 
 
         ## 거래에 필요한 kis config 파일 읽어와서 계정 관련 설정
@@ -185,11 +186,11 @@ class systemTrade:
         url = f"{self.url_base}/{path}"
 
         params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_etc_cls_code": "",
-            "fid_input_iscd": code,
-            "fid_input_hour_1": '',  # 아래 에서 삽입
-            "fid_pw_data_incu_yn": "N"
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_ETC_CLS_CODE": "",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_HOUR_1": '',  # 아래 에서 삽입
+            "FID_PW_DATA_INCU_YN": "N"
         }
 
         headers = {"Content-Type": "application/json",
@@ -205,7 +206,7 @@ class systemTrade:
 
         df_times = []
         for time in time_list:
-            params['fid_input_hour_1'] = time
+            params['FID_INPUT_HOUR_1'] = time
             res = requests.get(url, headers=headers, params=params)
             data = res.json()["output2"]
             df = self._make_df(tr_id, data)
@@ -547,215 +548,332 @@ class systemTrade:
 
     def run(self):
 
-        ## 실제 시간 확인하여 웨이팅하기
-        init_time = "094000"  ## ma40 때문인듯 에러가 나서... 일단 40분으로 시간 제약 해둠
-        if self.trade_config["scheduler"]["mode"] == "real":
-            while True:
-                real_time = datetime.now().time().strftime("%H%M%S")
-                if real_time >= init_time:  ## bol window 가 20 이라, 최소 index 가 20 이상이어야 함
-                    break
+        if self.mode == 'real':
+            ## 실제 시간 확인하여 웨이팅하기
+            init_time = "094000"  ## ma40 때문인듯 에러가 나서... 일단 40분으로 시간 제약 해둠
+            if self.trade_schedule["mode"] == "real":
+                while True:
+                    real_time = datetime.now().time().strftime("%H%M%S")
+                    if real_time >= init_time:  ## bol window 가 20 이라, 최소 index 가 20 이상이어야 함
+                        break
 
-                print(f"현재시간 ({real_time}) 이 목표시간 ({init_time}) 에 도달하지 못했기 때문에 기다립니다.")
-                time.sleep(60)
+                    print(f"현재시간 ({real_time}) 이 목표시간 ({init_time}) 에 도달하지 못했기 때문에 기다립니다.")
+                    time.sleep(60)
 
         ######################################
         ####     시간 정보는 여기서 한번에 처리
         ######################################
         now = datetime.now()
         now_str = now.time().strftime("%H:%M:%S")
+        now_str2 = now_str.replace(":", "")
         _msg = f"{now_str} 시에 프로그램 실행합니다."
         stu.send_telegram_message(config=self.param_init, message=_msg)
 
         ################################
         ####     Monitoring 종목 가져오기
         ################################
-        path = self.file_manager["monitor_stocks"]["path"]
-        flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
+        # 트레이밍 대상을 kospi 또는 개별종목 따라 진행 사항이 달라진다.
+        if self.trade_target in ['all', 'stock']: # 모니터링할 개별 종목 확인
+            path = self.file_manager["monitor_stocks"]["path"]
+            flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
 
-        ## 시간 포멧이 일정하기 때문에 str 비교로도 가장 최근을 선택할 수 있음
-        nstr = ''
-        for f in flist:
-            if f > nstr:
-                nstr = f
+            ## 시간 포멧이 일정하기 때문에 str 비교로도 가장 최근을 선택할 수 있음
+            nstr = ''
+            for f in flist:
+                if f > nstr:
+                    nstr = f
 
-        ## 탐색할 종목명 확인
-        df = pd.read_csv(nstr)
-        codes0 = df.Code.to_list()
-        codes = [str(x).zfill(6) for x in codes0]
-        df_dict = dict()
-        for code in codes:
-            df_dict[code] = dict()
-            df_dict[code]['data'] = pd.DataFrame()
+            ## 탐색할 종목명 확인
+            df = pd.read_csv(nstr)
+            codes0 = df.Code.to_list()
+            selected_stocks = [str(x).zfill(6) for x in codes0]
+            selected_stock_names = []
+            stocks_dict = dict()
+            for code in selected_stocks:
+                stocks_dict[code] = dict()
+                stocks_dict[code]['data'] = pd.DataFrame()
+                name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
+                selected_stock_names.append(name)
 
-        ################################
-        ####     장 시작 중 시작 시, 대응...
-        ################################
-        ### 한번에 많이 불러와서 죽는 문제 -> 제약 사항 추가하여 대응하기
-
-        ## KIS API 자주 사용 시, locking 됨. 테스트 버전은 최대한 재사용 하여 접속양을 줄인다.
+        ########################################
+        ####     초기 데이터 준비 (kospi 는 관련 없음)
+        ########################################
+        '''
+        실행조건: 
+          - real 일 경우, now 를 확인하고 진행
+            -- 0910 이후 진행 (이전에는 데이터가 없음. 에러남) 
+            -- reduce_api 가 실행된 상태이면, 오늘 중 가낭 최근 데이터까지는 불러 오고 나머지는 신규로 가져온다.  (TBD)
+          - backfill, test 는 지정날짜에 저장된 데이터를 가져온다. 
+            -- 만약 해당일에 데이터가 하나도 없으면 에러 발생하고 종료 
+            -- 선택된 종목 중 일부가 없으면 종목을 제거하고 다음 진행.
+             
+        '''
+        ### 한번에 많이 불러와서 죽는 문제 -> 초당 15회도 처리 가능함을 확인 받음 (22.10.30). timed_out 발생 이유는 로컬 네트워크 문제라고 함 ??
         base_path = self.file_manager["system_trade"]["path"]
+        reduce_api = self.trade_config["reduce_api"]
 
-        if _DEBUG != True :
+        if self.mode == "real":
             ## 현 시점이 장 시작 전이면 초기 데이터를 만들어 놓기 시작합니다.
-            now_str = datetime.now().time().strftime(now_str.replace(":",""))
             time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
 
-            if '090010' <= now_str:
-                for code in codes:
-                    times = ["090000", now_str]
+            if '090010' <= now_str2:
+                for code in selected_stocks:
+                    times = ["090000", now_str2]
                     df_fin = self._make_curr_df(code, times)
-                    df_dict[code]['data'] = df_fin
+                    stocks_dict[code]['data'] = df_fin
                     logger.info(f"장 시작 9시 이후에 시작되었기 때문에 시간({times} 에 대한 종목({code}) 실시간 정보를 미리 준비합니다.)")
 
                     name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
                     stu.file_save(df_fin, file_path=base_path+time_path, file_name=f"{name}_{code}.csv", replace=False)
-        else:  ## 최신 데이터로 로드해오기.
-            if _DEBUG_NEWDATA:
-                now = datetime.now()
-                time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
 
-                for code in codes:
-                    times = ["090000", "153000"]
-                    df_fin = self._make_curr_df(code, times)
-                    df_dict[code]['data'] = df_fin
-                    logger.info(f"장 시작 9시 이후에 시작되었기 때문에 시간({times} 에 대한 종목({code}) 실시간 정보를 미리 준비합니다.)")
-                    name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
-                    stu.file_save(df_fin, file_path=base_path + time_path, file_name=f"{name}_{code}.csv", replace=False)
-            else:
-                dlist = glob(base_path + "*/*/*/*/")  ## 년/월/일/시간/*.csv
-                dfin = ''
-                for d in dlist:
-                    if d > dfin:
-                        dfin = d  ## 최신 폴더 찾아내기
+            ## Real 은 Kospi 사전 준비가 없음 (아래 단계에서 데이터 준비 및 차트가 동시 일어남)
 
-                print(f"디버그 모드 사용 중입니다. KIS API 사용 최쇠화를 위해 최신 current 데이터를 csv 로 부터 읽어 옵니다.(경로: {dfin})")
-                flist = os.listdir(dfin)
-
-                for code in codes:
-                    chk1 = False
-                    for f in flist:
-                        if code in f:  ## 파일명이 종목 코드 이므로,
-                            df =stu.file_load(file_path=dfin, file_name=f, type='csv')
-                            df.index = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M:%S')
-                            df_dict[code]["data"] = df
-                            chk1 = True
+        else:  ## backfill, test
+            '''
+                Backfill 은 날짜 범짜 범위 지정. Test 는 특정 날짜. 
+                Backtest 제약 조건
+                    - 날짜범위가 30일을 넘으면 안됨
+                    - 개별 날짜 마다 존재하는 데이터를 불러옴 (날짜마다 종목 리스트가 다를 수 있음) 
+                    - 모든 날짜에 데이터가 존재하지 않으면 에러 처리 
+                
+            '''
+            ## 데이터 구조 생성 (날짜별 stocks_dict 저장)
+            test_dict = dict()
+            dates = self.trade_config["test_date"]
+            dates = dates.split("-")
+            test_dates = []
+            if self.mode == 'backfill':
+                for i in range(31): # max length = 30
+                    if i ==0 :
+                        tdate= int(dates[0])
+                    elif i == 30:
+                        raise ValueError (f"Backfill 의 test_date 는 30 일 이하여야 합니다. (현재: {dates})")
+                    else:
+                        tdate = tdate + 1
+                        if tdate > int(dates[1]):
                             break
-                    if not chk1:
-                        raise ValueError(f"[Debug 모드] 종목코드({code}) 관련 Dataframe 을 찾을 수 없습니다. (경로:{dfin})")
 
-        ## chart 로 표시하기
-        cm = tradeStrategy('./config/config.yaml')
-        cm.display = 'save'  ## 파일로 차트 저장하기
-        day_tlist = self._make_time_list(["090000", "153000"], interval=self.mon_intv)
-        times = [0, 0]  ## st, end
-        now_time = datetime.now().time().strftime("%H%M%S")
-        chart_base_path = self.file_manager["system_trade"]["path"] + "chart/"
-        today = datetime.now().date().strftime("%Y%m%d")
+                    test_dict[str(tdate)] = dict()
+                    test_dates.append(str(tdate))
+            else: # test
+                test_dict[dates[1]] = dict()
+                test_dates.append(dates[1])
+
+            ## 저장된 데이터 불러 오기
+            if self.trade_target in ['all', 'stock']:
+                empty_cnt = 0
+                for tdate in test_dates:
+                    ## 년/월/일/시간/*.csv
+                    dlist = glob(base_path + f"year={tdate[0:4]}/month={tdate[4:6]}/day={tdate[6:8]}/*/")
+                    if len(dlist) == 0 :
+                        _msg = f"모드({self.mode}) 의 지정날짜({tdate}) 에 대한 저장된 데이터가 존재하지 않습니다. "
+                        logger.info(_msg)
+                        empty_cnt += 1
+                        continue
+
+                    ## 해당 일의 마지막 데이터 folder 찾기
+                    dfin = ''
+                    for d in dlist:
+                        if d > dfin:
+                            dfin = d
+
+                    ## 선택된 종목이 다른지 확인. 불러온 데이터에서 선택된 종목이 없을 경우 종목을 삭제함.
+                    flist = os.listdir(dfin)
+                    load_stock = []
+                    for f in flist:
+                        load_stock.append(f.split("_")[0])
+
+                    ## todo: selected_stocks 가 고정임. 데일리로 변경해야 하는지 추후 고민
+                    stocks_dict = dict()
+                    for code in selected_stocks:
+                        chk1 = False
+                        stocks_dict[code] = dict()
+                        for f in flist:
+                            if code in f:  ## 파일명이 종목 코드 이므로,
+                                df =stu.file_load(file_path=dfin, file_name=f, type='csv')
+                                df.index = pd.to_datetime(df.index, format='%Y-%m-%d %H:%M:%S')
+                                stocks_dict[code]["data"] = df
+                                chk1 = True
+                                break
+                        if not chk1:
+                            logger.info(f"종목코드({code}) 는 지정된 날짜({tdate})에 존재하지 않습니다. 탐색대상에서 제외합니다. (경로:{dfin})")
+                            del(stocks_dict[code])
+
+                    ## 모든 종목이 삭제된 경우를 확인
+                    if len(stocks_dict) == 0 :
+                        _msg = f"모드({self.mode}) 의 지정날짜({tdate}) 에  선택한 종목 중 저장된 데이터가 하나도 없습니다. "
+                        logger.info(_msg)
+                        empty_cnt += 1
+                    else:
+                        ### 데이터 쌓기
+                        test_dict[tdate] = stocks_dict
+
+                ## 범위 날짜중 데이터거 하나도 없는 경우 에러 처리
+                if len(test_dates) == empty_cnt:
+                    _msg = f"모드({self.mode}) 의 지정날짜({dates}) 에 대한 저장된 데이터가 하나도 존재하지 않습니다. "
+                    raise ValueError(_msg)
+
+            if self.trade_target in ['all', 'kospi']:
+                empty_cnt = 0
+                for tdate in test_dates:
+                    ## 년/월/일/시간/*.csv
+                    dlist = glob(base_path + 'kospi/csv/' + f"year={tdate[0:4]}/month={tdate[4:6]}/day={tdate[6:8]}/*/")
+                    if len(dlist) == 0:
+                        _msg = f"모드({self.mode}) 의 지정날짜({tdate}) 에 대한 저장된 데이터가 존재하지 않습니다. "
+                        logger.info(_msg)
+                        empty_cnt += 1
+                    else:
+                        ## 해당 일의 마지막 데이터 folder 찾기
+                        dfin = ''
+                        for d in dlist:
+                            if d > dfin:
+                                dfin = d
+
+                        ## 선택된 종목이 다른지 확인. 불러온 데이터에서 선택된 종목이 없을 경우 종목을 삭제함.
+                        # flist = os.listdir(dfin)
+                        df = stu.file_load(file_path=dfin, file_name="kospi.csv", type='csv')
+                        try:
+                            df.index = pd.to_datetime(df.index, format="%Y:%m:%d %H:%M:%S")
+                        except:
+                            print(f"타임 포멧이 잘못 저장되었음. 찾아서 수정 필요 -- %Y-%m-%d %H:%M:%S. (파일위치:{dfin})")
+                            df.index = pd.to_datetime(df.index, format="%Y-%m-%d %H:%M:%S")
+                        df.interpolate(inplace=True) ## 중간에 발생한 missing 처리
+
+                        stocks_dict = dict()
+                        stocks_dict["kospi"] = dict()
+                        stocks_dict["kospi"]["data"] = df  ## 포멧을 맞추기 위한 용
+
+                        test_dict[tdate] = stocks_dict
+
+                if len(test_dates) == empty_cnt:
+                    _msg = f"모드({self.mode}) 의 지정날짜({dates}) 에 대한 저장된 데이터가 하나도 존재하지 않습니다. "
+                    raise ValueError(_msg)
 
 
-        if (now_time > '153000'):
-            ## 저장할 경로 확인
-            now = datetime.now()
-            time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
-            image_path = chart_base_path + time_path
-            cm.path = image_path
+        ###########################################
+        ####     Realtime 용. (나머지는 chart 생성만)
+        ###########################################
+        '''
+        실행조건: 
+          - real 일 경우, now 를 확인하고 진행
+            -- 1530  이후는 차트 표시 후, 저장. 
+            -- 1530 이전은 dataframe 까지 생성 및 저장  
+          - backfill, test 는 지정날짜에 저장된 데이터를 가져온다. 
+            -- chart 만 보여주기 
 
-            for code in codes:
-                df_acc = df_dict[code]['data']  ## 이미 앞에서 모두 준비된 상태
-                df_acc = df_acc.fillna(0)  ## missing 처리
-                df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
-                name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
-                image_name = f"{name}_{code}.png"
-                cm.name = image_name
-                print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
-                df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+        '''
+        ## 데이터 생성은 real 에서만 (나머지는 read only)
+        if self.mode == 'real':
+            cm = tradeStrategy('./config/config.yaml')
+            cm.display = 'save'  ## real 은 모든 파일 저장이 고정 (텔레그램 전송 때문)
+            ### 얼마나 자주 반복할지 결정
+            day_tlist = self._make_time_list([now_str2, "153000"], interval=self.mon_intv)
+            times = [0, 0]  ## st, end
+            chart_base_path = self.file_manager["system_trade"]["path"] + "chart/"
+            today = now.date().strftime("%Y%m%d")
 
-                ## 파일로도 저장
-                stu.file_save(df_acc, file_path=base_path + time_path, file_name=f"{code}.csv", replace=False)
-
-            ### kospi 는 항상 전달하기 (추후 신호 발생 시만 전달하기)
-            msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
-            stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
-            stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
-
-        else:  ## 장중 진행 상황 확인
-            for idx, t in enumerate(day_tlist[:-1]):
-                times.append(t)
-                times.pop(0)
-
+            if (now_str2 > '153000'):
                 ## 저장할 경로 확인
-                now = datetime.today()
                 time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
-
                 image_path = chart_base_path + time_path
                 cm.path = image_path
 
-                if t < now_time:
-                    ## 시작 시간이 장 시작 후 일 경우 처리
-                    pass
-                else:
+                if self.trade_target in ['all', 'stock']:
+                    for code in selected_stocks:
+                        df_acc = stocks_dict[code]['data']  ## 이미 앞에서 모두 준비된 상태
+                        df_acc = df_acc.fillna(0)  ## missing 처리
+                        df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
+                        name = stock.get_market_ticker_name(code)  ## 기본으로 입력해줘야 함
+                        image_name = f"{name}_{code}.png"
+                        cm.name = image_name
+                        print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
+                        df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+
+                        ## 파일로도 저장
+                        stu.file_save(df_acc, file_path=base_path + time_path, file_name=f"{code}.csv", replace=False)
+
+                if self.trade_target in ['all', 'kospi']:
+                    msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
+                    stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
+                    stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
+
+            else:  ## 장중 진행 상황 확인
+                for idx, t in enumerate(day_tlist[:-1]):
+                    times.append(t)
+                    times.pop(0)
+
+                    ## 저장할 경로 확인
+                    now = datetime.today()
+                    time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
+                    image_path = chart_base_path + time_path
+                    cm.path = image_path
+
                     if idx == 0:
                         ## 0900 는 실행 하지 않음
                         pass
                     else:
-                        for code in codes:
-
+                        if self.trade_target in ['all', 'stock']:
                             ###############################
                             #### 한국투자API 를 이용하여 DF 생성
                             ###############################
-                            df_fin = self._make_curr_df(code, times)
-                            df_acc = df_dict[code]['data']
+                            for code in selected_stocks:
+                                df_fin = self._make_curr_df(code, times)
+                                df_acc = stocks_dict[code]['data']
 
-                            if len(df_acc) == 0:
-                                df_acc = df_fin
-                            else:
-                                df_acc = pd.concat([df_acc, df_fin])
+                                if len(df_acc) == 0:
+                                    df_acc = df_fin
+                                else:
+                                    df_acc = pd.concat([df_acc, df_fin])
 
-                            df_acc = df_acc.fillna(0)  ## missing 처리
-                            df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
+                                df_acc = df_acc.fillna(0)  ## missing 처리
+                                df_acc = df_acc.loc[~df_acc.index.duplicated(keep='first')]  # index 중복 제거
 
-                            name = stock.get_market_ticker_name(code)
-                            image_name = f"{name}_{code}.png"
-                            cm.name = image_name
-                            if len(df_acc) != 0:
-                                print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
-                                df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
+                                name = stock.get_market_ticker_name(code)
+                                image_name = f"{name}_{code}.png"
+                                cm.name = image_name
+                                if len(df_acc) != 0:
+                                    print(f"차트 (time: {str(now)}) 를 생성합니다. (파일명: {image_name})")
+                                    df_ohlcv = cm.run(code, name, data=df_acc, dates=[today, today], mode='realtime')
 
-                                ## 다음 사용을 위해 데이터 저장
-                                df_dict[code]['data'] = df_acc
+                                    ## 다음 사용을 위해 데이터 저장
+                                    stocks_dict[code]['data'] = df_acc
 
-                                # 매수 조건이 발생하였는지 확인 (텔레그림..발생)
-                                ## 조건1: 채결 강도가 100 을 넘었을 경우, 차트로 알려주기
-                                cstrth = float(df_ohlcv.tail(1).ChegyeolStr)
-                                close0 = int(df_ohlcv.head(1).Close)
-                                close1 = int(df_ohlcv.tail(1).Close)
-                                change = self._change_ratio(close1, close0)
+                                    # 매수 조건이 발생하였는지 확인 (텔레그림..발생)
+                                    ## 조건1: 채결 강도가 100 을 넘었을 경우, 차트로 알려주기
+                                    cstrth = float(df_ohlcv.tail(1).ChegyeolStr)
+                                    close0 = int(df_ohlcv.head(1).Close)
+                                    close1 = int(df_ohlcv.tail(1).Close)
+                                    change = self._change_ratio(close1, close0)
 
-                                df_chg = self._bollinger_chegyeol(df_ohlcv) # param 은 기본으로 사용
-                                ch_sig = df_chg.copy()
-                                ch_sig_flag = ch_sig.tail(self.mon_intv).bolBuy_chegyeol.any()
-                                # ch_sig = df_chegyeol.bolBuy_chegyeol.any()
-                                # print(name, ch_sig, df_chegyeol.bol_upper_chegyeol.to_list() )
-                                if ch_sig_flag :
-                                    ch_sig = df_chg.copy().tail(self.mon_intv)
-                                    idx_list = ch_sig[ch_sig.bolBuy_chegyeol == True].index.to_list()
-                                    del_str = datetime.now().date().strftime("%Y-%m-%d ")
-                                    idx_list2 = [str(x) for x in idx_list]
-                                    idx_list2 = [x.replace(del_str, '') for x in idx_list2]
-                                    _msg = f"현재 ({str(now)}) 종목 ({name}) 의 채결 강도가 급하게 상승한 구간이 최근 10분 내 존재합니다. (시점: {idx_list2}) "
-                                    print(_msg)
-                                    stu.send_telegram_message(config=self.param_init, message=_msg)
-                                    stu.send_telegram_message(config=self.param_init, message=f"현재 등락률은 {change}% 입니다.(장전 갭상은 반영 못함)")
-                                    stu.send_telegram_image(config=self.param_init, image_name_path=image_path+image_name)
+                                    df_chg = self._bollinger_chegyeol(df_ohlcv)  # param 은 기본으로 사용
+                                    ch_sig = df_chg.copy()
+                                    ch_sig_flag = ch_sig.tail(self.mon_intv).bolBuy_chegyeol.any()
+                                    # ch_sig = df_chegyeol.bolBuy_chegyeol.any()
+                                    # print(name, ch_sig, df_chegyeol.bol_upper_chegyeol.to_list() )
+                                    if ch_sig_flag:
+                                        ch_sig = df_chg.copy().tail(self.mon_intv)
+                                        idx_list = ch_sig[ch_sig.bolBuy_chegyeol == True].index.to_list()
+                                        del_str = datetime.now().date().strftime("%Y-%m-%d ")
+                                        idx_list2 = [str(x) for x in idx_list]
+                                        idx_list2 = [x.replace(del_str, '') for x in idx_list2]
+                                        _msg = f"현재 ({str(now)}) 종목 ({name}) 의 채결 강도가 급하게 상승한 구간이 최근 10분 내 존재합니다. (시점: {idx_list2}) "
+                                        print(_msg)
+                                        stu.send_telegram_message(config=self.param_init, message=_msg)
+                                        stu.send_telegram_message(config=self.param_init,
+                                                                  message=f"현재 등락률은 {change}% 입니다.(장전 갭상은 반영 못함)")
+                                        stu.send_telegram_image(config=self.param_init,
+                                                                image_name_path=image_path + image_name)
 
-                                ## csv 파일로도 저장
-                                stu.file_save(df_chg, file_path=base_path + time_path,
-                                              file_name=f"{name}_{code}.csv", replace=False)
+                                    ## csv 파일로도 저장
+                                    stu.file_save(df_chg, file_path=base_path + time_path,
+                                                  file_name=f"{name}_{code}.csv", replace=False)
 
-                        ### kospi 는 항상 전달하기 (추후 신호 발생 시만 전달하기)
-                        msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
-                        stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
-                        stu.send_telegram_image(config=self.param_init, image_name_path=msg_kospi["image_name_path"])
+                        if self.trade_target in ['all', 'kospi']:
+                            msg_kospi = self._investor_position()  ## 파일 저장까지 내부 포함
+                            stu.send_telegram_message(config=self.param_init, message=msg_kospi["msg"])
+                            stu.send_telegram_image(config=self.param_init,
+                                                    image_name_path=msg_kospi["image_name_path"])
 
                         ## 실제 시간 확인하여 웨이팅하기
                         while True:
@@ -765,6 +883,33 @@ class systemTrade:
 
                             print(f"현재시간 ({real_time}) 이 목표시간 ({t}) 에 도달하지 못했기 때문에 기다립니다.")
                             time.sleep(30)
+
+        else: ## backtest, test
+            ## todo: stock 용은 추후 진행
+            for tdate in test_dates:
+                if self.trade_target in ['all', 'kospi']:
+
+                    # 데이터 선택하기
+                    if "kospi" in test_dict[tdate]:
+                        df = test_dict[tdate]["kospi"]["data"]
+
+                        cm = tradeStrategy('./config/config.yaml')
+                        cm.display = "on"  ## 파일로 차트 저장하기
+                        df_ohlcv = cm.run('00000000', 'kospi', data=df, dates=[tdate, tdate], mode='investor')
+
+                        stClose = df_ohlcv.Close.iat[0]
+                        endClose = df_ohlcv.Close.iat[-1]
+                        change = self._change_ratio(curr=endClose, prev=stClose)
+                        _msg = f'지정날짜 {tdate}의 kospi 등락률은 {change} % 입니다.'  # for 등락률
+                        print(_msg)
+                    else:
+                        pass
+
+            print("finish!!!")
+
+
+
+
 
     #############################
     #### Internal Func
@@ -807,7 +952,7 @@ class systemTrade:
 
         return df
 
-    def _investor_position(self):
+    def _investor_position(self, mode='real'):
         '''
           투자자별 매매 동향의 주체가 변경되는 시점을 이용하여 인버스, 레버리지 매수 매도 전략
           이유
@@ -820,22 +965,23 @@ class systemTrade:
         '''
 
 
-        ### Issue: 선물 데이터 때문에 09:20 부터 진행 해야 함. (All NaN 여서 에러남)
-        now = datetime.now()
-        now_str = now.strftime("%H%M%S")
-        if now_str <= '092000':  ## URL 주소 용: 장 시작전이면, 어제 날짜 데이터를 불러옴
-            td_dt = date.today() - timedelta(days=1)
-            td = td_dt.strftime("%Y:%m:%d")
-        else:
-            td = datetime.today().strftime("%Y:%m:%d")
-        url_date = td.replace(":", "")
 
         ## 신규 생성되는 csv, image 저장을 위한 폴더 생성 용
         base_csv_path = self.file_manager["system_trade"]["path"] + 'kospi/csv/'
         base_image_path = self.file_manager["system_trade"]["path"] + 'kospi/image/'
-        time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
 
-        if self.trade_kospi["test"] != "on":
+        if mode == "real":
+            ### Issue: 선물 데이터 때문에 09:20 부터 진행 해야 함. (All NaN 여서 에러남)
+            now = datetime.now()
+            now_str = now.strftime("%H%M%S")
+            if now_str <= '092000':  ## URL 주소 용: 장 시작전이면, 어제 날짜 데이터를 불러옴
+                td_dt = date.today() - timedelta(days=1)
+                td = td_dt.strftime("%Y:%m:%d")
+            else:
+                td = datetime.today().strftime("%Y:%m:%d")
+            url_date = td.replace(":", "")
+            time_path = f"year={now.strftime('%Y')}/month={now.strftime('%m')}/day={now.strftime('%d')}/time={now.strftime('%H%M')}/"
+
             df_tot_list = []
             for i in range(4):
                 df_list = []
@@ -940,7 +1086,7 @@ class systemTrade:
 
             ## 마지막 저장한 데이터 가져오기
             path = self.file_manager["system_trade"]["path"] + "kospi/csv/"
-            tdate = self.trade_kospi["test_date"]
+            tdate = self.trade_config["test_date"]
 
             if tdate == 'all':
                 flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
@@ -964,7 +1110,10 @@ class systemTrade:
             df_tot.interpolate(inplace=True)
 
         cm = tradeStrategy('./config/config.yaml')
-        cm.display = self.trade_kospi['display']  ## 파일로 차트 저장하기
+        if mode == "real":
+            cm.display = "save"  ## 파일로 차트 저장하기
+        else:
+            cm.display = self.trade_config['display']  ## 파일로 차트 저장하기
         cm.path = base_image_path + time_path
         cm.name = 'kospi.png'
         df_ohlcv = cm.run('00000000', 'kospi', data=df_tot, dates=[td, td], mode='investor')
@@ -1051,9 +1200,9 @@ if __name__ == '__main__':
 
 
     #######
-    kis.auth()
-    ## 계좌 정보
-    df = kis.get_acct_balance()
+    # kis.auth()
+    # 계좌 정보
+    # df = kis.get_acct_balance()
 
     # tr._investor_position()
     tr.run()

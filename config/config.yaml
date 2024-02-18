@@ -49,10 +49,13 @@ mainInit:
 
 tradeStock:
   scheduler:
-    mode: "real"
+    mode: "real"  # real, backfill, test
     interval: 5  # unit: min.
     target: "all"  # all, stock, kospi
-    reduce_api: True
+  config:
+    reduce_api: False  # (TBD)
+    test_display: 'save' # on, off, save
+    test_date: "20221020-20221028"  ## test 일 경우 마지막일만 인식 (backfill 은 범위 인식)
 
 
   buy_condition:
@@ -62,12 +65,6 @@ tradeStock:
   sell_condition:
     default_profit_change: 10 # unit: percentage
     default_holding_days: 30 # unit: days
-  kospi:
-    control:
-      test: "off"  ## off, on
-#      test_date: "all"  ## all, 20221018...
-      test_date: "20221019"  ## all, 20221018...
-      display: 'save' # on, off, save
 
 
 searchMacro:
@@ -79,20 +76,22 @@ searchStock:
   mode: 'market_leader'   ## market_leader, theme, upjong
   market_leader:
     target: 'from_krx'   ## from_krx, from_theme, from_code, from_name,
-    display_chart: 'save'  ## on, off, save,
+    display_chart: 'on'  ## on, off, save,
     from_krx:
       params:
-        threshold_close: 10000  # 조건1 - 종가 최소 금액
-        threshold_finance_score: 60   # 조건2 -  제무재표 스코어
-        threshold_min_trend: 0 # (unit: %). 조건3 - trend period 기간 동안 등락률
-        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (on/off)
+        threshold_close: 5000  # 조건1 - 종가 최소 금액
+        threshold_finance_score: 70   # 조건2 -  제무재표 스코어
+        threshold_min_trend: 5 # (unit: %). 조건3 - trend period 기간 동안 등락률
+        threshold_min_change: False # 조건4 - 하한은 코스피 상회 (True/False)
         threshold_max_change: 30 # (unit: %) 조건4_2 - change period 동안 등락륲 제한선 (너무 튀는건 관심 없음)
         threshold_volumecost: 5 # (unit: 억원) 조건 5 - change period 동안 거래대금 최소
         shortselling_sort_count: 500  # 조건 6 - change period 동안 거래 회전율 순으로 sorting 및 cutoff
+        tracking_stocks: 제이시스메디칼, 코스모신소재, 포스코케미칼, 삼양식품
+
       config:
         change_period : 7 ## days  ## 단기 변동폭 확인용
-        trend_period : 60 ## days  ## 상승추세 확인용
-        chart_period : 1200 ## days  ## 매물대 시각적 확인용
+        trend_period : 30 ## days  ## 상승추세 확인용
+        chart_period : 1500 ## days  ## 매물대 시각적 확인용
 
     from_theme:
       params:
@@ -161,5 +160,28 @@ searchStock:
       display_stock_chart: False
 
 
+scoreRule:
+  score_debt_ratio:
+    - 0
+    - 100
+    - 150
+    - 200
+
+  score_quick_ratio:
+    - 10000
+    - 100
+    - 75
+    - 50
+
+  score_reserve_ratio:
+    - 10000000
+    - 100
+    - 0
+
+  score_market_value:
+    - 0
+    - 200000000000
+    - 400000000000
+    - 600000000000
 
 
