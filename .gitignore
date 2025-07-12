@@ -3,3 +3,7 @@ chromedriver-mac-arm64/
 log/system.log
 log/systemTrade.log
 log/systemTrade.log
+
+.venv/
+__pycache__/
+*.log

@@ -1,6 +1,6 @@
 # Core Data Processing
-pandas>=1.5.0
-numpy>=1.24.0
+pandas>=2.3.1
+numpy<2.0.0
 PyYAML>=6.0
 
 # Korean Stock Market Data
@@ -19,7 +19,7 @@ mplfinance>=0.12.10b0
 
 # Machine Learning & NLP
 scikit-learn>=1.3.0
-torch>=2.0.0
+torch>=1.13.0,<2.0.0
 sentence-transformers>=2.2.0
 bertopic>=0.15.0
 konlpy>=0.6.0
@@ -42,7 +42,7 @@ webdriver-manager>=4.0.0
 tqdm>=4.65.0
 
 # Word Processing
-gensim>=4.3.0
+gensim>=4.3.3
 
 # Additional ML Libraries
 transformers>=4.30.0
