@@ -1,4 +1,186 @@
-#
+# ST (System Trading) v0.1 Configuration
+# 스윙 매매 기반 자동매매 시스템 설정
+
+###########################################
+# 🚀 NEW: 거래 설정 (Trading Configuration)
+###########################################
+trading:
+  # 포지션 관리
+  max_positions: 20                    # 최대 동시 보유 종목 수
+  position_size_pct: 5.0               # 계좌 대비 포지션 크기 (%)
+  
+  # 손익 관리
+  stop_loss_pct: -5.0                  # Stop Loss 비율 (%)
+  take_profit_pct: 10.0                # Take Profit 비율 (%)
+  daily_loss_limit_pct: -10.0          # 일일 손실 한도 (%)
+  
+  # 실시간 모니터링
+  check_interval_seconds: 10           # 포지션 체크 주기 (초)
+  price_update_interval: 5             # 가격 업데이트 주기 (초)
+  
+  # 거래 시간
+  market_open_time: "09:00"           # 장 시작 시간
+  market_close_time: "15:30"          # 장 마감 시간
+  pre_market_minutes: 30              # 장 시작 전 준비 시간 (분)
+
+###########################################
+# 🔗 NEW: 데이터 소스 설정
+###########################################
+data_sources:
+  primary: "fdr"                       # 주 데이터 소스 (fdr, pykrx, kis)
+  fallback: "pykrx"                   # 폴백 데이터 소스
+  cache_duration: 300                  # 캐시 유지 시간 (초)
+  
+  # API 설정
+  kis_api:
+    enabled: true
+    timeout: 30                       # API 타임아웃 (초)
+    retry_count: 3                    # 재시도 횟수
+    
+  external_apis:
+    fdr:
+      enabled: true
+      rate_limit: 100                 # 분당 요청 제한
+    pykrx:
+      enabled: true
+      rate_limit: 50
+
+###########################################
+# 🔔 NEW: 알림 설정
+###########################################
+notifications:
+  telegram:
+    enabled: true
+    trade_alerts: true                # 매매 알림
+    error_alerts: true                # 에러 알림
+    daily_report: true                # 일일 리포트
+    portfolio_updates: true           # 포트폴리오 업데이트
+    
+  # 알림 조건
+  alert_conditions:
+    min_profit_pct: 5.0              # 최소 수익률 알림 기준
+    min_loss_pct: -3.0               # 최소 손실률 알림 기준
+    position_change: true            # 포지션 변경 알림
+
+###########################################
+# 🗄️ NEW: 백업 설정
+###########################################
+backup:
+  supabase:
+    enabled: false                   # Supabase 백업 활성화
+    interval_hours: 24               # 백업 주기 (시간)
+    auto_backup: true                # 자동 백업
+    
+  local:
+    enabled: true
+    path: "./backup/"
+    retention_days: 30               # 백업 보관 기간 (일)
+
+###########################################
+# 🖥️ NEW: API 서버 설정
+###########################################
+api_server:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  cors_enabled: true
+  
+  # 인증 설정
+  auth:
+    google_oauth:
+      enabled: true
+      client_id: ""                  # Google OAuth Client ID
+      client_secret: ""              # Google OAuth Client Secret
+    
+  # 보안 설정
+  security:
+    rate_limit: 1000                 # 시간당 요청 제한
+    session_timeout: 3600            # 세션 타임아웃 (초)
+
+###########################################
+# 📊 NEW: 백테스팅 설정
+###########################################
+backtesting:
+  default_period_days: 365            # 기본 백테스트 기간 (일)
+  commission_rate: 0.00015            # 수수료율
+  slippage_rate: 0.001               # 슬리피지율
+  
+  # 성과 분석
+  benchmark: "KOSPI"                 # 벤치마크 지수
+  risk_free_rate: 0.025              # 무위험 수익률
+  
+  # 시각화
+  chart_output_path: "./data/backtest_results/"
+  save_charts: true
+  chart_format: "png"               # png, html
+
+###########################################
+# 🎯 NEW: 전략 설정
+###########################################
+strategies:
+  # 기본 전략 파라미터
+  default:
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    
+    bollinger_period: 20
+    bollinger_std: 2.0
+    
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    
+    volume_ma_period: 20
+    volume_threshold: 1.5            # 거래량 급증 기준
+    
+  # 커스텀 전략 경로
+  custom_strategies_path: "./strategies/"
+  strategy_templates_path: "./strategy_templates/"
+
+###########################################
+# 📱 NEW: UI 설정
+###########################################
+ui:
+  # 대시보드 설정
+  dashboard:
+    refresh_interval: 5              # 새로고침 주기 (초)
+    chart_period: "1D"              # 기본 차트 기간
+    
+  # 차트 설정
+  charts:
+    tradingview_enabled: true
+    default_indicators: ["SMA", "RSI", "MACD"]
+    
+  # 테마
+  theme: "dark"                     # dark, light
+  language: "ko"                    # ko, en
+
+###########################################
+# 🔧 NEW: 로깅 설정
+###########################################
+logging:
+  level: "INFO"                     # DEBUG, INFO, WARNING, ERROR
+  
+  # 로그 파일 설정
+  files:
+    trading: "./log/trading.log"
+    system: "./log/system.log"
+    error: "./log/error.log"
+    
+  # 로그 로테이션
+  rotation:
+    max_size: "100MB"
+    backup_count: 10
+    
+  # 구조화된 로깅
+  structured: true
+  json_format: true
+
+###########################################
+# 기존 설정 (Legacy Configuration)
+###########################################
+
 fileControl:
   search_stocks:
     path: "./data/search_stocks/"
@@ -15,7 +197,7 @@ fileControl:
 
   ## tools 용
   news:
-    path: "./datda/news/"
+    path: "./data/news/"
     name: ""
   models:
     path: "./data/models/"
@@ -26,7 +208,7 @@ fileControl:
   model_results:
     keywords:
       path: "./data/model_results/keywords/"
-      name: "종목별_업종정보_20220902.csv"
+      name: "종목별_업종정보_20220902.csv"
 
 ## main 설정값
 mainInit:
@@ -49,14 +231,13 @@ mainInit:
 
 tradeStock:
   scheduler:
-    mode: "real"  # real, backfill, test
+    mode: "virtual"  # real, virtual, backfill
     interval: 5  # unit: min.
     target: "all"  # all, stock, kospi
   config:
     reduce_api: False  # (TBD)
     test_display: 'save' # on, off, save
     test_date: "20221020-20221028"  ## test 일 경우 마지막일만 인식 (backfill 은 범위 인식)
-
 
   buy_condition:
     codepick_buy_holdday: 40 # days
@@ -65,6 +246,18 @@ tradeStock:
   sell_condition:
     default_profit_change: 10 # unit: percentage
     default_holding_days: 30 # unit: days
+
+# 새로운 거래 엔진 설정
+trading:
+  max_positions: 20
+  position_size_pct: 5.0
+  stop_loss_pct: -5.0
+  take_profit_pct: 10.0
+  daily_loss_limit_pct: -10.0
+  check_interval_seconds: 10
+  market_open_time: "09:00"
+  market_close_time: "15:30"
+  strategy_name: "Combined"  # BollingerBand, RSI, Combined
 
 
 searchMacro:
@@ -76,7 +269,7 @@ searchStock:
   mode: 'market_leader'   ## market_leader, theme, upjong
   market_leader:
     target: 'from_krx'   ## from_krx, from_theme, from_code, from_name,
-    display_chart: 'on'  ## on, off, save,
+    display_chart: 'save'  ## on, off, save,
     from_krx:
       params:
         threshold_close: 5000  # 조건1 - 종가 최소 금액

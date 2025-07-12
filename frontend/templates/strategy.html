@@ -1,0 +1,647 @@
+{% extends "base.html" %}
+
+{% block title %}전략 관리 - ST Trading System{% endblock %}
+{% block page_title %}전략 관리{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- 전략 목록 -->
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-list"></i>
+                    사용 가능한 전략
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="strategy-list">
+                    <!-- 전략 목록이 여기에 로드됩니다 -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- 저장된 전략 -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-save"></i>
+                    저장된 전략
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="saved-strategies">
+                    <!-- 저장된 전략 목록이 여기에 로드됩니다 -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- 전략 성과 -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-chart-bar"></i>
+                    전략 성과
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="strategy-performance">
+                    <p class="text-muted">전략을 선택하면 성과가 표시됩니다.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 전략 설정 -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-cog"></i>
+                    전략 설정
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="strategy-config-section" style="display: none;">
+                    <!-- 전략 정보 -->
+                    <div class="row mb-4">
+                        <div class="col-md-8">
+                            <h4 id="strategy-name">전략명</h4>
+                            <p id="strategy-description" class="text-muted">전략 설명</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <span id="strategy-risk-badge" class="badge bg-secondary">리스크 수준</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 파라미터 설정 폼 -->
+                    <form id="strategy-params-form">
+                        <div id="strategy-params-container">
+                            <!-- 동적으로 생성되는 파라미터 입력 필드 -->
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                    <i class="fas fa-undo"></i>
+                                    기본값으로 복원
+                                </button>
+                            </div>
+                            <div class="col-md-6 text-end">
+                                <button type="button" class="btn btn-outline-primary me-2" onclick="validateParams()">
+                                    <i class="fas fa-check"></i>
+                                    검증
+                                </button>
+                                <button type="button" class="btn btn-primary" onclick="saveStrategy()">
+                                    <i class="fas fa-save"></i>
+                                    저장
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <!-- 파라미터 검증 결과 -->
+                    <div id="validation-result" class="mt-3" style="display: none;">
+                        <div class="alert" role="alert">
+                            <ul id="validation-errors" class="mb-0"></ul>
+                        </div>
+                    </div>
+                    
+                    <!-- 실시간 미리보기 -->
+                    <div class="card mt-4">
+                        <div class="card-header">
+                            <h6 class="card-title mb-0">
+                                <i class="fas fa-eye"></i>
+                                실시간 미리보기
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <canvas id="preview-chart" height="200"></canvas>
+                                </div>
+                                <div class="col-md-6">
+                                    <div id="preview-stats">
+                                        <div class="row text-center">
+                                            <div class="col-6">
+                                                <div class="border rounded p-2">
+                                                    <div class="h5 mb-0" id="preview-signals">0</div>
+                                                    <small class="text-muted">예상 신호</small>
+                                                </div>
+                                            </div>
+                                            <div class="col-6">
+                                                <div class="border rounded p-2">
+                                                    <div class="h5 mb-0" id="preview-trades">0</div>
+                                                    <small class="text-muted">예상 거래</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="no-strategy-selected" class="text-center py-5">
+                    <i class="fas fa-chart-line fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">전략을 선택해주세요</h5>
+                    <p class="text-muted">왼쪽에서 전략을 선택하면 설정을 변경할 수 있습니다.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 전략 저장 모달 -->
+<div class="modal fade" id="saveStrategyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">전략 저장</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="strategy-save-name" class="form-label">전략 이름</label>
+                    <input type="text" class="form-control" id="strategy-save-name" placeholder="나만의 전략 이름">
+                </div>
+                <div class="mb-3">
+                    <label for="strategy-save-description" class="form-label">설명 (선택사항)</label>
+                    <textarea class="form-control" id="strategy-save-description" rows="3" placeholder="전략에 대한 설명을 입력하세요"></textarea>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="strategy-save-enabled" checked>
+                    <label class="form-check-label" for="strategy-save-enabled">
+                        전략 활���화
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary" onclick="confirmSaveStrategy()">저장</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let availableStrategies = [];
+let currentStrategy = null;
+let currentParams = {};
+let previewChart = null;
+
+// 페이지 로드 시 전략 목록 로드
+document.addEventListener('DOMContentLoaded', function() {
+    loadStrategies();
+    loadSavedStrategies();
+});
+
+// 전략 목록 로드
+async function loadStrategies() {
+    try {
+        const response = await axios.get('/api/strategy/list');
+        availableStrategies = response.data.strategies;
+        displayStrategies();
+    } catch (error) {
+        console.error('전략 목록 로드 실패:', error);
+        showAlert('전략 목록을 불러오는데 실패했습니다.', 'danger');
+    }
+}
+
+// 전략 목록 표시
+function displayStrategies() {
+    const container = document.getElementById('strategy-list');
+    container.innerHTML = '';
+    
+    availableStrategies.forEach(strategy => {
+        const strategyCard = document.createElement('div');
+        strategyCard.className = 'card mb-2 strategy-card';
+        strategyCard.style.cursor = 'pointer';
+        strategyCard.onclick = () => selectStrategy(strategy);
+        
+        const riskColor = {
+            'low': 'success',
+            'medium': 'warning', 
+            'high': 'danger'
+        }[strategy.risk_level] || 'secondary';
+        
+        strategyCard.innerHTML = `
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">${strategy.name}</h6>
+                        <small class="text-muted">${strategy.type}</small>
+                    </div>
+                    <span class="badge bg-${riskColor}">${strategy.risk_level}</span>
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(strategyCard);
+    });
+}
+
+// 전략 선택
+async function selectStrategy(strategy) {
+    currentStrategy = strategy;
+    currentParams = {};
+    
+    // 선택된 전략 하이라이트
+    document.querySelectorAll('.strategy-card').forEach(card => {
+        card.classList.remove('border-primary');
+    });
+    event.currentTarget.classList.add('border-primary');
+    
+    // 전략 정보 표시
+    document.getElementById('strategy-name').textContent = strategy.name;
+    document.getElementById('strategy-description').textContent = strategy.description;
+    
+    const riskBadge = document.getElementById('strategy-risk-badge');
+    const riskColor = {
+        'low': 'success',
+        'medium': 'warning',
+        'high': 'danger'
+    }[strategy.risk_level] || 'secondary';
+    riskBadge.className = `badge bg-${riskColor}`;
+    riskBadge.textContent = `${strategy.risk_level} 리스크`;
+    
+    // 파라미터 폼 생성
+    createParameterForm(strategy.params);
+    
+    // 전략 성과 로드
+    await loadStrategyPerformance(strategy.id);
+    
+    // UI 표시
+    document.getElementById('no-strategy-selected').style.display = 'none';
+    document.getElementById('strategy-config-section').style.display = 'block';
+    
+    // 미리보기 업데이트
+    updatePreview();
+}
+
+// 파라미터 폼 생성
+function createParameterForm(params) {
+    const container = document.getElementById('strategy-params-container');
+    container.innerHTML = '';
+    
+    Object.entries(params).forEach(([paramName, paramConfig]) => {
+        const formGroup = document.createElement('div');
+        formGroup.className = 'mb-3';
+        
+        const label = document.createElement('label');
+        label.className = 'form-label';
+        label.textContent = paramConfig.description || paramName;
+        
+        const input = document.createElement('input');
+        input.type = paramConfig.type === 'int' ? 'number' : 'number';
+        input.className = 'form-control';
+        input.id = `param-${paramName}`;
+        input.value = paramConfig.default;
+        input.min = paramConfig.min || '';
+        input.max = paramConfig.max || '';
+        if (paramConfig.type === 'float') {
+            input.step = '0.1';
+        }
+        
+        // 실시간 미리보기 업데이트
+        input.addEventListener('input', function() {
+            currentParams[paramName] = paramConfig.type === 'int' ? 
+                parseInt(this.value) : parseFloat(this.value);
+            updatePreview();
+        });
+        
+        // 기본값 설정
+        currentParams[paramName] = paramConfig.default;
+        
+        const helpText = document.createElement('small');
+        helpText.className = 'form-text text-muted';
+        helpText.textContent = `범위: ${paramConfig.min || '제한없음'} ~ ${paramConfig.max || '제한없음'}`;
+        
+        formGroup.appendChild(label);
+        formGroup.appendChild(input);
+        formGroup.appendChild(helpText);
+        container.appendChild(formGroup);
+    });
+}
+
+// 전략 성과 로드
+async function loadStrategyPerformance(strategyId) {
+    try {
+        const response = await axios.get(`/api/strategy/performance/${strategyId}`);
+        const performance = response.data.performance;
+        
+        const container = document.getElementById('strategy-performance');
+        container.innerHTML = `
+            <div class="row text-center">
+                <div class="col-6 mb-3">
+                    <div class="border rounded p-2">
+                        <div class="h6 mb-0 text-success">${performance.total_return.toFixed(1)}%</div>
+                        <small class="text-muted">총 수익률</small>
+                    </div>
+                </div>
+                <div class="col-6 mb-3">
+                    <div class="border rounded p-2">
+                        <div class="h6 mb-0 text-primary">${performance.win_rate.toFixed(1)}%</div>
+                        <small class="text-muted">승률</small>
+                    </div>
+                </div>
+                <div class="col-6 mb-3">
+                    <div class="border rounded p-2">
+                        <div class="h6 mb-0 text-warning">${performance.sharpe_ratio.toFixed(2)}</div>
+                        <small class="text-muted">샤프 비율</small>
+                    </div>
+                </div>
+                <div class="col-6 mb-3">
+                    <div class="border rounded p-2">
+                        <div class="h6 mb-0 text-danger">${performance.max_drawdown.toFixed(1)}%</div>
+                        <small class="text-muted">최대 낙폭</small>
+                    </div>
+                </div>
+            </div>
+            <hr>
+            <div class="row text-center">
+                <div class="col-6">
+                    <div class="h6 mb-0">${performance.total_trades}</div>
+                    <small class="text-muted">총 거래수</small>
+                </div>
+                <div class="col-6">
+                    <div class="h6 mb-0">${performance.avg_holding_days.toFixed(1)}일</div>
+                    <small class="text-muted">평균 보유기간</small>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('전략 성과 로드 실패:', error);
+        document.getElementById('strategy-performance').innerHTML = 
+            '<p class="text-muted">성과 데이터를 불러올 수 없습니다.</p>';
+    }
+}
+
+// 기본값으로 복원
+function resetToDefaults() {
+    if (!currentStrategy) return;
+    
+    Object.entries(currentStrategy.params).forEach(([paramName, paramConfig]) => {
+        const input = document.getElementById(`param-${paramName}`);
+        if (input) {
+            input.value = paramConfig.default;
+            currentParams[paramName] = paramConfig.default;
+        }
+    });
+    
+    updatePreview();
+    showAlert('기본값으로 복원되었습니다.', 'info');
+}
+
+// 파라미터 검증
+async function validateParams() {
+    if (!currentStrategy) return;
+    
+    const config = {
+        name: `${currentStrategy.name} 설정`,
+        strategy_type: currentStrategy.id,
+        params: currentParams,
+        enabled: true
+    };
+    
+    try {
+        const response = await axios.post('/api/strategy/validate', config);
+        const result = response.data;
+        
+        const resultDiv = document.getElementById('validation-result');
+        const errorsUl = document.getElementById('validation-errors');
+        
+        if (result.valid) {
+            resultDiv.className = 'mt-3 alert alert-success';
+            errorsUl.innerHTML = '<li>모든 파라미터가 유효합니다!</li>';
+        } else {
+            resultDiv.className = 'mt-3 alert alert-danger';
+            errorsUl.innerHTML = result.errors.map(error => `<li>${error}</li>`).join('');
+        }
+        
+        resultDiv.style.display = 'block';
+        
+        // 3초 후 자동 숨김
+        setTimeout(() => {
+            resultDiv.style.display = 'none';
+        }, 3000);
+        
+    } catch (error) {
+        console.error('파라미터 검증 실패:', error);
+        showAlert('파라미터 검증에 실패했습니다.', 'danger');
+    }
+}
+
+// 전략 저장
+function saveStrategy() {
+    if (!currentStrategy) return;
+    
+    // 모달 표시
+    const modal = new bootstrap.Modal(document.getElementById('saveStrategyModal'));
+    document.getElementById('strategy-save-name').value = `${currentStrategy.name} 커스텀`;
+    modal.show();
+}
+
+// 전략 저장 확인
+async function confirmSaveStrategy() {
+    const name = document.getElementById('strategy-save-name').value;
+    const description = document.getElementById('strategy-save-description').value;
+    const enabled = document.getElementById('strategy-save-enabled').checked;
+    
+    if (!name.trim()) {
+        showAlert('전략 이름을 입력해주세요.', 'warning');
+        return;
+    }
+    
+    const config = {
+        name: name,
+        strategy_type: currentStrategy.id,
+        params: currentParams,
+        enabled: enabled,
+        description: description
+    };
+    
+    try {
+        const response = await axios.post('/api/strategy/save', config);
+        
+        // 모달 닫기
+        const modal = bootstrap.Modal.getInstance(document.getElementById('saveStrategyModal'));
+        modal.hide();
+        
+        showAlert('전략이 저장되었습니다!', 'success');
+        
+        // 저장된 전략 목록 새로고침
+        loadSavedStrategies();
+        
+    } catch (error) {
+        console.error('전략 저장 실패:', error);
+        showAlert('전략 저장에 실패했습니다.', 'danger');
+    }
+}
+
+// 저장된 전략 목록 로드
+async function loadSavedStrategies() {
+    try {
+        const response = await axios.get('/api/strategy/saved');
+        const savedStrategies = response.data.strategies;
+        displaySavedStrategies(savedStrategies);
+    } catch (error) {
+        console.error('저장된 전략 로드 실패:', error);
+        document.getElementById('saved-strategies').innerHTML = 
+            '<p class="text-muted">저장된 전략을 불러올 수 없습니다.</p>';
+    }
+}
+
+// 저장된 전략 표시
+function displaySavedStrategies(strategies) {
+    const container = document.getElementById('saved-strategies');
+    
+    if (strategies.length === 0) {
+        container.innerHTML = '<p class="text-muted">저장된 전략이 없습니다.</p>';
+        return;
+    }
+    
+    container.innerHTML = '';
+    
+    strategies.forEach(strategy => {
+        const strategyItem = document.createElement('div');
+        strategyItem.className = 'border rounded p-2 mb-2';
+        
+        const createdDate = new Date(strategy.created_at).toLocaleDateString();
+        const statusBadge = strategy.enabled ? 
+            '<span class="badge bg-success">활성</span>' : 
+            '<span class="badge bg-secondary">비활성</span>';
+        
+        strategyItem.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="mb-1">${strategy.name}</h6>
+                    <small class="text-muted">${strategy.strategy_type} • ${createdDate}</small>
+                    ${strategy.description ? `<div class="small text-muted mt-1">${strategy.description}</div>` : ''}
+                </div>
+                <div class="text-end">
+                    ${statusBadge}
+                    <button class="btn btn-sm btn-outline-primary ms-1" onclick="loadSavedStrategy('${strategy.name}')">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger ms-1" onclick="deleteSavedStrategy('${strategy.name}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(strategyItem);
+    });
+}
+
+// 저장된 전략 로드
+function loadSavedStrategy(strategyName) {
+    // 실제로는 저장된 전략 데이터를 로드하여 폼에 적용
+    showAlert(`${strategyName} 전략을 로드했습니다.`, 'info');
+}
+
+// 저장된 전략 삭제
+async function deleteSavedStrategy(strategyName) {
+    if (!confirm(`'${strategyName}' 전략을 삭제하시겠습니까?`)) {
+        return;
+    }
+    
+    try {
+        const safeName = strategyName.replace(/[^a-zA-Z0-9\s\-_]/g, '').replace(/\s+/g, '_');
+        await axios.delete(`/api/strategy/saved/${safeName}`);
+        
+        showAlert('전략이 삭제되었습니다.', 'success');
+        loadSavedStrategies();
+        
+    } catch (error) {
+        console.error('전략 삭제 실패:', error);
+        showAlert('전략 삭제에 실패했습니다.', 'danger');
+    }
+}
+
+// 실시간 미리보기 업데이트
+function updatePreview() {
+    if (!currentStrategy || !currentParams) return;
+    
+    // 간단한 시뮬레이션 (실제로는 서버에서 계산)
+    const signals = Math.floor(Math.random() * 50) + 10;
+    const trades = Math.floor(signals * 0.6);
+    
+    document.getElementById('preview-signals').textContent = signals;
+    document.getElementById('preview-trades').textContent = trades;
+    
+    // 차트 업데이트
+    updatePreviewChart();
+}
+
+// 미리보기 차트 업데이트
+function updatePreviewChart() {
+    const ctx = document.getElementById('preview-chart').getContext('2d');
+    
+    if (previewChart) {
+        previewChart.destroy();
+    }
+    
+    // 샘플 데이터 생성
+    const labels = Array.from({length: 30}, (_, i) => `${i+1}일`);
+    const data = Array.from({length: 30}, () => Math.random() * 10 - 5);
+    
+    previewChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '예상 수익률',
+                data: data,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return value + '%';
+                        }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+}
+
+// 알림 표시
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.querySelector('.container-fluid').insertBefore(alertDiv, document.querySelector('.row'));
+    
+    // 5초 후 자동 제거
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
+</script>
+{% endblock %}

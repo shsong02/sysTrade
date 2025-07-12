@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>종목 발굴 - ST Trading System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .discovery-card {
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .discovery-card:hover {
+            transform: translateY(-2px);
+        }
+        .status-badge {
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+        }
+        .candidate-item {
+            border-left: 4px solid #007bff;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 0 8px 8px 0;
+        }
+        .score-high { border-left-color: #28a745; }
+        .score-medium { border-left-color: #ffc107; }
+        .score-low { border-left-color: #dc3545; }
+        .loading-spinner {
+            display: none;
+        }
+        .sector-chart {
+            max-height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-chart-line me-2"></i>ST Trading System
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">대시보드</a>
+                <a class="nav-link" href="/backtest">백테스팅</a>
+                <a class="nav-link active" href="/discovery">종목 발굴</a>
+                <a class="nav-link" href="/strategy">전략 관리</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- 페이지 헤더 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2><i class="fas fa-search me-2"></i>종목 발굴</h2>
+                        <p class="text-muted">재무제표 분석과 거시경제 분석을 통한 투자 후보 종목 발굴</p>
+                    </div>
+                    <div>
+                        <button id="runDiscoveryBtn" class="btn btn-primary btn-lg">
+                            <i class="fas fa-play me-2"></i>종목 발굴 실행
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 상태 카드 -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card discovery-card">
+                    <div class="card-body text-center">
+                        <div class="loading-spinner" id="statusSpinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                        </div>
+                        <div id="statusContent">
+                            <i class="fas fa-info-circle fa-2x text-info mb-2"></i>
+                            <h6>상태</h6>
+                            <span id="statusBadge" class="badge status-badge bg-secondary">대기 중</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card discovery-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-list fa-2x text-success mb-2"></i>
+                        <h6>후보 종목</h6>
+                        <h4 id="candidateCount" class="text-success">-</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card discovery-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-star fa-2x text-warning mb-2"></i>
+                        <h6>고득점 종목</h6>
+                        <h4 id="highScoreCount" class="text-warning">-</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card discovery-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-chart-line fa-2x text-primary mb-2"></i>
+                        <h6>시장 심리</h6>
+                        <span id="marketSentiment" class="badge status-badge bg-info">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 거시경제 분석 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card discovery-card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-globe me-2"></i>거시경제 분석</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="macroAnalysis">
+                            <p class="text-muted">거시경제 분석 데이터가 없습니다. 종목 발굴을 실행해주세요.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 섹터별 분석 및 상위 종목 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card discovery-card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie me-2"></i>섹터별 분석</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="sectorChart" class="sector-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card discovery-card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-trophy me-2"></i>상위 후보 종목 (Top 10)</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                        <div id="topCandidates">
+                            <p class="text-muted">후보 종목 데이터가 없습니다.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 전체 후보 종목 목록 -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card discovery-card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-list me-2"></i>전체 후보 종목</h5>
+                        <div>
+                            <button class="btn btn-outline-primary btn-sm" onclick="exportCandidates()">
+                                <i class="fas fa-download me-1"></i>Excel 다운로드
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="candidatesTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>순위</th>
+                                        <th>종목명</th>
+                                        <th>코드</th>
+                                        <th>재무점수</th>
+                                        <th>등락률</th>
+                                        <th>거래대금(억)</th>
+                                        <th>섹터</th>
+                                        <th>업종</th>
+                                        <th>매수신호일</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="candidatesTableBody">
+                                    <tr>
+                                        <td colspan="9" class="text-center text-muted">데이터를 불러오는 중...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let sectorChart = null;
+        let refreshInterval = null;
+
+        // 페이지 로드 시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDiscoveryStatus();
+            loadCandidates();
+            loadMacroAnalysis();
+            loadSectorAnalysis();
+        });
+
+        // 종목 발굴 실행
+        document.getElementById('runDiscoveryBtn').addEventListener('click', function() {
+            runDiscovery();
+        });
+
+        async function runDiscovery() {
+            const btn = document.getElementById('runDiscoveryBtn');
+            const spinner = document.getElementById('statusSpinner');
+            const content = document.getElementById('statusContent');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>실행 중...';
+            
+            try {
+                const response = await fetch('/api/discovery/run', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStatus('running', '실행 중');
+                    showAlert('success', data.message);
+                    
+                    // 5초마다 상태 확인
+                    refreshInterval = setInterval(checkProgress, 5000);
+                } else {
+                    showAlert('danger', data.detail || '실행 실패');
+                }
+            } catch (error) {
+                showAlert('danger', '서버 오류: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-play me-2"></i>종목 발굴 실행';
+            }
+        }
+
+        async function checkProgress() {
+            try {
+                const response = await fetch('/api/discovery/status');
+                const data = await response.json();
+                
+                if (data.status === 'completed') {
+                    clearInterval(refreshInterval);
+                    updateStatus('completed', '완료');
+                    loadDiscoveryStatus();
+                    loadCandidates();
+                    loadMacroAnalysis();
+                    loadSectorAnalysis();
+                    showAlert('success', '종목 발굴이 완료되었습니다!');
+                }
+            } catch (error) {
+                console.error('상태 확인 실패:', error);
+            }
+        }
+
+        async function loadDiscoveryStatus() {
+            try {
+                const response = await fetch('/api/discovery/status');
+                const data = await response.json();
+                
+                if (data.status === 'completed' && data.report) {
+                    updateStatus('completed', '완료');
+                    document.getElementById('candidateCount').textContent = data.report.total_candidates;
+                    document.getElementById('highScoreCount').textContent = data.report.summary.high_score_count;
+                    
+                    const sentiment = data.report.macro_analysis.market_sentiment || 'Unknown';
+                    const sentimentBadge = document.getElementById('marketSentiment');
+                    sentimentBadge.textContent = sentiment;
+                    sentimentBadge.className = `badge status-badge ${getSentimentClass(sentiment)}`;
+                } else {
+                    updateStatus('no_data', '데이터 없음');
+                }
+            } catch (error) {
+                console.error('상태 로딩 실패:', error);
+                updateStatus('error', '오류');
+            }
+        }
+
+        async function loadCandidates() {
+            try {
+                const response = await fetch('/api/discovery/candidates?limit=50');
+                const data = await response.json();
+                
+                if (data.candidates && data.candidates.length > 0) {
+                    updateTopCandidates(data.candidates.slice(0, 10));
+                    updateCandidatesTable(data.candidates);
+                }
+            } catch (error) {
+                console.error('후보 종목 로딩 실패:', error);
+            }
+        }
+
+        async function loadMacroAnalysis() {
+            try {
+                const response = await fetch('/api/discovery/macro-analysis');
+                const data = await response.json();
+                
+                if (data.analysis) {
+                    updateMacroAnalysis(data.analysis);
+                }
+            } catch (error) {
+                console.error('거시경제 분석 로딩 실패:', error);
+            }
+        }
+
+        async function loadSectorAnalysis() {
+            try {
+                const response = await fetch('/api/discovery/sectors');
+                const data = await response.json();
+                
+                if (data.sectors) {
+                    updateSectorChart(data.sectors);
+                }
+            } catch (error) {
+                console.error('섹터 분석 로딩 실패:', error);
+            }
+        }
+
+        function updateStatus(status, text) {
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = text;
+            
+            const classes = {
+                'running': 'bg-warning',
+                'completed': 'bg-success',
+                'error': 'bg-danger',
+                'no_data': 'bg-secondary'
+            };
+            
+            badge.className = `badge status-badge ${classes[status] || 'bg-secondary'}`;
+        }
+
+        function updateTopCandidates(candidates) {
+            const container = document.getElementById('topCandidates');
+            
+            if (candidates.length === 0) {
+                container.innerHTML = '<p class="text-muted">후보 종목이 없습니다.</p>';
+                return;
+            }
+            
+            const html = candidates.map((candidate, index) => {
+                const scoreClass = getScoreClass(candidate.finance_score);
+                return `
+                    <div class="candidate-item ${scoreClass}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${candidate.name}</strong> 
+                                <span class="text-muted">(${candidate.code})</span>
+                            </div>
+                            <div class="text-end">
+                                <div class="fw-bold text-primary">${candidate.finance_score}점</div>
+                                <small class="text-muted">${candidate.change}%</small>
+                            </div>
+                        </div>
+                        <div class="mt-1">
+                            <small class="text-muted">
+                                ${candidate.sector} | 거래대금: ${Math.round(candidate.volume_cost/100000000)}억원
+                            </small>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = html;
+        }
+
+        function updateCandidatesTable(candidates) {
+            const tbody = document.getElementById('candidatesTableBody');
+            
+            if (candidates.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">후보 종목이 없습니다.</td></tr>';
+                return;
+            }
+            
+            const html = candidates.map((candidate, index) => `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td><strong>${candidate.name}</strong></td>
+                    <td>${candidate.code}</td>
+                    <td>
+                        <span class="badge ${getScoreBadgeClass(candidate.finance_score)}">
+                            ${candidate.finance_score}점
+                        </span>
+                    </td>
+                    <td class="${candidate.change >= 0 ? 'text-success' : 'text-danger'}">
+                        ${candidate.change > 0 ? '+' : ''}${candidate.change}%
+                    </td>
+                    <td>${Math.round(candidate.volume_cost/100000000)}억</td>
+                    <td>${candidate.sector}</td>
+                    <td>${candidate.industry}</td>
+                    <td>${candidate.buy_signal_date || '-'}</td>
+                </tr>
+            `).join('');
+            
+            tbody.innerHTML = html;
+        }
+
+        function updateMacroAnalysis(analysis) {
+            const container = document.getElementById('macroAnalysis');
+            
+            if (!analysis || Object.keys(analysis).length === 0) {
+                container.innerHTML = '<p class="text-muted">거시경제 분석 데이터가 없습니다.</p>';
+                return;
+            }
+            
+            const html = `
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>전체 ETF</h6>
+                            <h4 class="text-primary">${analysis.total_etfs || 0}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>상승 ETF</h6>
+                            <h4 class="text-success">${analysis.positive_etfs || 0}</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>상승 비율</h6>
+                            <h4 class="text-info">${analysis.positive_ratio || 0}%</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h6>시장 심리</h6>
+                            <span class="badge ${getSentimentClass(analysis.market_sentiment)} status-badge">
+                                ${analysis.market_sentiment || 'Unknown'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                ${analysis.top_performers ? `
+                <div class="mt-3">
+                    <h6>상위 성과 ETF</h6>
+                    <div class="row">
+                        ${analysis.top_performers.slice(0, 5).map(etf => `
+                            <div class="col">
+                                <small class="text-muted">${etf.name}</small><br>
+                                <strong class="text-success">+${etf.change}%</strong>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            `;
+            
+            container.innerHTML = html;
+        }
+
+        function updateSectorChart(sectors) {
+            const ctx = document.getElementById('sectorChart').getContext('2d');
+            
+            if (sectorChart) {
+                sectorChart.destroy();
+            }
+            
+            const sectorNames = Object.keys(sectors);
+            const sectorCounts = sectorNames.map(name => sectors[name].count);
+            const colors = [
+                '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+                '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF'
+            ];
+            
+            sectorChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: sectorNames,
+                    datasets: [{
+                        data: sectorCounts,
+                        backgroundColor: colors.slice(0, sectorNames.length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        function getScoreClass(score) {
+            if (score >= 80) return 'score-high';
+            if (score >= 60) return 'score-medium';
+            return 'score-low';
+        }
+
+        function getScoreBadgeClass(score) {
+            if (score >= 80) return 'bg-success';
+            if (score >= 60) return 'bg-warning';
+            return 'bg-danger';
+        }
+
+        function getSentimentClass(sentiment) {
+            const classes = {
+                'Positive': 'bg-success',
+                'Neutral': 'bg-warning',
+                'Negative': 'bg-danger'
+            };
+            return classes[sentiment] || 'bg-secondary';
+        }
+
+        function showAlert(type, message) {
+            const alertHtml = `
+                <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+            
+            const container = document.querySelector('.container');
+            container.insertAdjacentHTML('afterbegin', alertHtml);
+            
+            // 5초 후 자동 제거
+            setTimeout(() => {
+                const alert = container.querySelector('.alert');
+                if (alert) {
+                    alert.remove();
+                }
+            }, 5000);
+        }
+
+        function exportCandidates() {
+            // Excel 다운로드 기능 (추후 구현)
+            showAlert('info', 'Excel 다운로드 기능은 추후 구현 예정입니다.');
+        }
+    </script>
+</body>
+</html> 

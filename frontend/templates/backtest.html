@@ -1,0 +1,472 @@
+{% extends "base.html" %}
+
+{% block title %}백테스팅 - ST Trading System{% endblock %}
+{% block page_title %}백테스팅{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- 백테스트 설정 -->
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-cog"></i>
+                    백테스트 설정
+                </h5>
+            </div>
+            <div class="card-body">
+                <form id="backtest-form">
+                    <!-- 종목 선택 -->
+                    <div class="mb-3">
+                        <label for="symbols" class="form-label">종목 선택</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="symbol-input" placeholder="종목코드 또는 이름">
+                            <button class="btn btn-outline-secondary" type="button" onclick="addSymbol()">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                        <div id="selected-symbols" class="mt-2">
+                            <span class="badge bg-primary me-1">005930 <i class="fas fa-times ms-1" onclick="removeSymbol('005930')"></i></span>
+                            <span class="badge bg-primary me-1">000660 <i class="fas fa-times ms-1" onclick="removeSymbol('000660')"></i></span>
+                        </div>
+                    </div>
+                    
+                    <!-- 전략 선택 -->
+                    <div class="mb-3">
+                        <label for="strategy" class="form-label">전략 선택</label>
+                        <select class="form-select" id="strategy" onchange="updateStrategyParams()">
+                            <option value="bollinger">볼린저 밴드</option>
+                            <option value="rsi">RSI</option>
+                            <option value="ma_cross">이동평균 교차</option>
+                        </select>
+                    </div>
+                    
+                    <!-- 전략 파라미터 -->
+                    <div id="strategy-params">
+                        <div class="mb-3">
+                            <label for="window" class="form-label">기간 (일)</label>
+                            <input type="number" class="form-control" id="window" value="20" min="5" max="50">
+                        </div>
+                        <div class="mb-3">
+                            <label for="std_dev" class="form-label">표준편차 배수</label>
+                            <input type="number" class="form-control" id="std_dev" value="2.0" min="1.0" max="3.0" step="0.1">
+                        </div>
+                    </div>
+                    
+                    <!-- 기간 설정 -->
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="mb-3">
+                                <label for="start-date" class="form-label">시작일</label>
+                                <input type="date" class="form-control" id="start-date" value="2023-01-01">
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="mb-3">
+                                <label for="end-date" class="form-label">종료일</label>
+                                <input type="date" class="form-control" id="end-date">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 자본금 및 수수료 -->
+                    <div class="mb-3">
+                        <label for="initial-capital" class="form-label">초기 자본금 (원)</label>
+                        <input type="number" class="form-control" id="initial-capital" value="10000000" step="1000000">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="commission" class="form-label">수수료율 (%)</label>
+                        <input type="number" class="form-control" id="commission" value="0.15" step="0.01">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-play"></i>
+                        백테스트 실행
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- 백테스트 목록 -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-history"></i>
+                    백테스트 이력
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="backtest-history">
+                    <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded">
+                        <div>
+                            <small class="text-muted">2024-01-15 14:30</small>
+                            <div>볼린저 밴드</div>
+                        </div>
+                        <div class="text-end">
+                            <div class="text-success">+15.8%</div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="loadBacktest('bt_001')">
+                                보기
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 결과 표시 영역 -->
+    <div class="col-lg-8">
+        <!-- 진행 상태 -->
+        <div id="progress-section" class="card mb-4" style="display: none;">
+            <div class="card-body text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="mt-2">백테스트 실행 중...</div>
+                <div class="progress mt-3">
+                    <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 결과 요약 -->
+        <div id="results-section" style="display: none;">
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title text-primary" id="total-return-result">0%</h5>
+                            <p class="card-text">총 수익률</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title text-success" id="win-rate-result">0%</h5>
+                            <p class="card-text">승률</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title text-warning" id="sharpe-ratio-result">0</h5>
+                            <p class="card-text">샤프 비율</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title text-danger" id="max-drawdown-result">0%</h5>
+                            <p class="card-text">최대 낙폭</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 성과 차트 -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-chart-line"></i>
+                        포트폴리오 성과
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="performance-chart" height="100"></canvas>
+                </div>
+            </div>
+            
+            <!-- 거래 내역 -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-list"></i>
+                        거래 내역
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>종목</th>
+                                    <th>진입일</th>
+                                    <th>청산일</th>
+                                    <th>진입가</th>
+                                    <th>청산가</th>
+                                    <th>수량</th>
+                                    <th>손익</th>
+                                    <th>수익률</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trades-table-result">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let selectedSymbols = ['005930', '000660'];
+let currentTaskId = null;
+let performanceChart = null;
+
+// 오늘 날짜를 종료일 기본값으로 설정
+document.getElementById('end-date').value = new Date().toISOString().split('T')[0];
+
+// 전략 파라미터 업데이트
+function updateStrategyParams() {
+    const strategy = document.getElementById('strategy').value;
+    const paramsDiv = document.getElementById('strategy-params');
+    
+    let paramsHtml = '';
+    
+    if (strategy === 'bollinger') {
+        paramsHtml = `
+            <div class="mb-3">
+                <label for="window" class="form-label">기간 (일)</label>
+                <input type="number" class="form-control" id="window" value="20" min="5" max="50">
+            </div>
+            <div class="mb-3">
+                <label for="std_dev" class="form-label">표준편차 배수</label>
+                <input type="number" class="form-control" id="std_dev" value="2.0" min="1.0" max="3.0" step="0.1">
+            </div>
+        `;
+    } else if (strategy === 'rsi') {
+        paramsHtml = `
+            <div class="mb-3">
+                <label for="period" class="form-label">RSI 기간</label>
+                <input type="number" class="form-control" id="period" value="14" min="5" max="30">
+            </div>
+            <div class="mb-3">
+                <label for="oversold" class="form-label">과매도 기준</label>
+                <input type="number" class="form-control" id="oversold" value="30" min="10" max="40">
+            </div>
+            <div class="mb-3">
+                <label for="overbought" class="form-label">과매수 기준</label>
+                <input type="number" class="form-control" id="overbought" value="70" min="60" max="90">
+            </div>
+        `;
+    } else if (strategy === 'ma_cross') {
+        paramsHtml = `
+            <div class="mb-3">
+                <label for="short_window" class="form-label">단기 이동평균</label>
+                <input type="number" class="form-control" id="short_window" value="5" min="3" max="20">
+            </div>
+            <div class="mb-3">
+                <label for="long_window" class="form-label">장기 이동평균</label>
+                <input type="number" class="form-control" id="long_window" value="20" min="10" max="50">
+            </div>
+        `;
+    }
+    
+    paramsDiv.innerHTML = paramsHtml;
+}
+
+// 종목 추가
+function addSymbol() {
+    const input = document.getElementById('symbol-input');
+    const symbol = input.value.trim();
+    
+    if (symbol && !selectedSymbols.includes(symbol)) {
+        selectedSymbols.push(symbol);
+        updateSymbolDisplay();
+        input.value = '';
+    }
+}
+
+// 종목 제거
+function removeSymbol(symbol) {
+    selectedSymbols = selectedSymbols.filter(s => s !== symbol);
+    updateSymbolDisplay();
+}
+
+// 종목 표시 업데이트
+function updateSymbolDisplay() {
+    const container = document.getElementById('selected-symbols');
+    container.innerHTML = selectedSymbols.map(symbol => 
+        `<span class="badge bg-primary me-1">${symbol} <i class="fas fa-times ms-1" onclick="removeSymbol('${symbol}')"></i></span>`
+    ).join('');
+}
+
+// 백테스트 폼 제출
+document.getElementById('backtest-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const strategy = document.getElementById('strategy').value;
+    const startDate = document.getElementById('start-date').value;
+    const endDate = document.getElementById('end-date').value;
+    const initialCapital = parseFloat(document.getElementById('initial-capital').value);
+    const commission = parseFloat(document.getElementById('commission').value) / 100;
+    
+    // 전략 파라미터 수집
+    const strategyParams = {};
+    const paramsDiv = document.getElementById('strategy-params');
+    const inputs = paramsDiv.querySelectorAll('input');
+    inputs.forEach(input => {
+        const value = input.type === 'number' ? parseFloat(input.value) : input.value;
+        strategyParams[input.id] = value;
+    });
+    
+    const requestData = {
+        symbols: selectedSymbols,
+        strategy: strategy,
+        strategy_params: strategyParams,
+        start_date: startDate,
+        end_date: endDate,
+        initial_capital: initialCapital,
+        commission: commission
+    };
+    
+    try {
+        // 진행 상태 표시
+        document.getElementById('progress-section').style.display = 'block';
+        document.getElementById('results-section').style.display = 'none';
+        
+        // 백테스트 실행 요청
+        const response = await axios.post('/api/backtest/run', requestData);
+        currentTaskId = response.data.task_id;
+        
+        // 결과 폴링 시작
+        pollBacktestResult();
+        
+    } catch (error) {
+        console.error('백테스트 실행 실패:', error);
+        alert('백테스트 실행에 실패했습니다.');
+        document.getElementById('progress-section').style.display = 'none';
+    }
+});
+
+// 백테스트 결과 폴링
+async function pollBacktestResult() {
+    if (!currentTaskId) return;
+    
+    try {
+        const response = await axios.get(`/api/backtest/result/${currentTaskId}`);
+        const data = response.data;
+        
+        if (data.status === 'completed') {
+            document.getElementById('progress-section').style.display = 'none';
+            displayBacktestResult(data.result);
+        } else if (data.status === 'error') {
+            document.getElementById('progress-section').style.display = 'none';
+            alert('백테스트 실행 중 오류가 발생했���니다: ' + data.error);
+        } else {
+            // 아직 실행 중이면 3초 후 다시 확인
+            setTimeout(pollBacktestResult, 3000);
+        }
+    } catch (error) {
+        console.error('결과 조회 실패:', error);
+        document.getElementById('progress-section').style.display = 'none';
+    }
+}
+
+// 백테스트 결과 표시
+function displayBacktestResult(result) {
+    const metrics = result.metrics;
+    
+    // 요약 지표 업데이트
+    document.getElementById('total-return-result').textContent = metrics.total_return.toFixed(2) + '%';
+    document.getElementById('win-rate-result').textContent = metrics.win_rate.toFixed(1) + '%';
+    document.getElementById('sharpe-ratio-result').textContent = metrics.sharpe_ratio.toFixed(2);
+    document.getElementById('max-drawdown-result').textContent = metrics.max_drawdown.toFixed(2) + '%';
+    
+    // 성과 차트 그리기
+    drawPerformanceChart(result.portfolio_values);
+    
+    // 거래 내역 표시
+    displayTrades(result.trades);
+    
+    // 결과 섹션 표시
+    document.getElementById('results-section').style.display = 'block';
+}
+
+// 성과 차트 그리기
+function drawPerformanceChart(portfolioData) {
+    const ctx = document.getElementById('performance-chart').getContext('2d');
+    
+    if (performanceChart) {
+        performanceChart.destroy();
+    }
+    
+    const labels = portfolioData.map(d => new Date(d.date).toLocaleDateString());
+    const values = portfolioData.map(d => d.returns);
+    
+    performanceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '포트폴리오 수익률',
+                data: values,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    ticks: {
+                        callback: function(value) {
+                            return value.toFixed(2) + '%';
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return '수익률: ' + context.parsed.y.toFixed(2) + '%';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// 거래 내역 표시
+function displayTrades(trades) {
+    const tbody = document.getElementById('trades-table-result');
+    tbody.innerHTML = '';
+    
+    trades.forEach(trade => {
+        const row = document.createElement('tr');
+        const pnlClass = trade.pnl >= 0 ? 'text-success' : 'text-danger';
+        
+        row.innerHTML = `
+            <td>${trade.symbol}</td>
+            <td>${new Date(trade.entry_date).toLocaleDateString()}</td>
+            <td>${new Date(trade.exit_date).toLocaleDateString()}</td>
+            <td>${trade.entry_price.toLocaleString()}</td>
+            <td>${trade.exit_price.toLocaleString()}</td>
+            <td>${trade.quantity}</td>
+            <td class="${pnlClass}">${trade.pnl.toLocaleString()}</td>
+            <td class="${pnlClass}">${trade.pnl_pct.toFixed(2)}%</td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+}
+
+// 페이지 로드 시 초기화
+document.addEventListener('DOMContentLoaded', function() {
+    updateSymbolDisplay();
+    updateStrategyParams();
+});
+</script>
+{% endblock %}
