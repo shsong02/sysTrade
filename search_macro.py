@@ -57,7 +57,7 @@ class searchMacro:
 
     설정 파일 구조:
         config.yaml:
-            fileControl: 파일 관리 설정
+            data_management: 파일 관리 설정
             mainInit: 초기화 파라미터
             searchMacro:
                 periods:
@@ -96,7 +96,7 @@ class searchMacro:
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
 
         # 설정 변수 초기화
-        self.file_manager = config["fileControl"]
+        self.file_manager = config["data_management"]
         self.param_init = config["mainInit"]
         self.macro_config = config["searchMacro"]
 

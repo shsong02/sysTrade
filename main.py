@@ -92,7 +92,7 @@ class STSystemManager:
         """설정 파일 필수 항목 검증"""
         required_sections = [
             'mainInit', 'tradeStock', 'searchStock', 
-            'searchMacro', 'scoreRule', 'fileControl'
+            'searchMacro', 'scoreRule', 'data_management'
         ]
         
         logger.info("설정 파일 검증 시작...")
@@ -510,7 +510,7 @@ class STSystemManager:
             from glob import glob
             
             # 재무 점수 데이터 로드 (새로운 경로 시스템 사용)
-            finance_path = get_data_path('fileControl.discovery.finance_score', self.config)
+            finance_path = get_data_path('data_management.discovery.finance_scores.path', self.config)
             finance_files = glob(os.path.join(finance_path, "*.csv"))
             if not finance_files:
                 logger.warning("재무 점수 데이터를 찾을 수 없습니다.")
@@ -521,7 +521,7 @@ class STSystemManager:
             df_finance = pd.read_csv(latest_finance_file)
             
             # 매수 조건 만족 종목 데이터 로드 (새로운 경로 시스템 사용)
-            screening_path = get_data_path('fileControl.discovery.stock_screening', self.config)
+            screening_path = get_data_path('data_management.discovery.stock_screening.path', self.config)
             buy_files = glob(os.path.join(screening_path, "**/buy_list_*.csv"), recursive=True)
             if not buy_files:
                 logger.warning("매수 조건 만족 종목 데이터를 찾을 수 없습니다.")
@@ -574,7 +574,7 @@ class STSystemManager:
             }
             
             # 리포트 저장 (새로운 경로 시스템 사용)
-            report_path = get_data_path('fileControl.discovery.reports', self.config)
+            report_path = get_data_path('data_management.discovery.reports.path', self.config)
             os.makedirs(report_path, exist_ok=True)
             
             report_filename = f"discovery_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -652,8 +652,8 @@ def create_directories():
             if create_path_from_base(backup_path):
                 created_count += 1
         
-        # fileControl 설정의 디렉토리도 생성 (base_path 기준)
-        file_config = config.get('fileControl', {})
+        # data_management 설정의 디렉토리도 생성 (base_path 기준)
+        file_config = config.get('data_management', {})
         for category in file_config.values():
             if isinstance(category, dict):
                 for item in category.values():
@@ -741,7 +741,7 @@ def get_data_path(config_key: str, config: dict = None) -> str:
     설정 키를 기반으로 데이터 경로 생성
     
     Args:
-        config_key: 설정 키 (예: 'discovery.macro_analysis', 'fileControl.discovery.reports')
+        config_key: 설정 키 (예: 'discovery.macro_analysis', 'data_management.discovery.reports.path')
         config: 설정 딕셔너리 (없으면 자동 로드)
         
     Returns:

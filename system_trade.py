@@ -52,12 +52,22 @@ class systemTrade:
             config_file = './config/config.yaml'  ## 고정값
             with open(config_file) as f:
                 config = yaml.load(f, Loader=yaml.FullLoader)
-        except Exception as e :
-            print (e)
+                
+            # 필수 설정 섹션 검증
+            required_sections = ['data_management', 'mainInit', 'tradeStock', 'searchStock', 'searchMacro', 'scoreRule']
+            for section in required_sections:
+                if section not in config:
+                    logger.error(f"필수 설정 섹션 누락: {section}")
+                    raise ValueError(f"필수 설정 섹션이 누락되었습니다: {section}")
+                logger.debug(f"설정 섹션 확인: {section}")
+                
+        except Exception as e:
+            print(e)
+            raise
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
 
         ## global 변수 선언
-        self.file_manager = config["fileControl"]
+        self.file_manager = config["data_management"]
         self.param_init = config["mainInit"]
 
         ##### 초기 변수 설정
@@ -92,7 +102,7 @@ class systemTrade:
         format = "%Y%m%d-%H%M%S"
         currtime = datetime.now()
         currtimestr = currtime.strftime(format=format)
-        path = self.file_manager["monitor_stocks"]["path"]
+        path = self.file_manager["shared"]["cache"]["path"]
 
         ## 없으면 폴더 생성
         try:
@@ -574,7 +584,7 @@ class systemTrade:
         ################################
         # 트레이밍 대상을 kospi 또는 개별종목 따라 진행 사항이 달라진다.
         if self.trade_target in ['all', 'stock']: # 모니터링할 개별 종목 확인
-            path = self.file_manager["monitor_stocks"]["path"]
+            path = self.file_manager["legacy"]["monitor_stocks"]["path"]
             flist = glob(path + "*/*/*/*/*.csv")  ## 년/월/일/시간/*.csv
 
             ## 시간 포멧이 일정하기 때문에 str 비교로도 가장 최근을 선택할 수 있음
@@ -609,7 +619,7 @@ class systemTrade:
              
         '''
         ### 한번에 많이 불러와서 죽는 문제 -> 초당 15회도 처리 가능함을 확인 받음 (22.10.30). timed_out 발생 이유는 로컬 네트워크 문제라고 함 ??
-        base_path = self.file_manager["system_trade"]["path"]
+        base_path = self.file_manager["trading"]["logs"]["path"]
         reduce_api = self.trade_config["reduce_api"]
 
         if self.mode == "real":
@@ -967,8 +977,8 @@ class systemTrade:
 
 
         ## 신규 생성되는 csv, image 저장을 위한 폴더 생성 용
-        base_csv_path = self.file_manager["system_trade"]["path"] + 'kospi/csv/'
-        base_image_path = self.file_manager["system_trade"]["path"] + 'kospi/image/'
+        base_csv_path = self.file_manager["shared"]["market_data"]["path"] + 'kospi/csv/'
+        base_image_path = self.file_manager["shared"]["market_data"]["path"] + 'kospi/image/'
 
         if mode == "real":
             ### Issue: 선물 데이터 때문에 09:20 부터 진행 해야 함. (All NaN 여서 에러남)

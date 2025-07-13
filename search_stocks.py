@@ -58,7 +58,7 @@ class searchStocks :
             print (e)
 
         ## global 변수 선언
-        self.file_manager = config["fileControl"]
+        self.file_manager = config["data_management"]
         self.init_conifg = config["mainInit"]
         self.trade_config = config["tradeStock"]
 

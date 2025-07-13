@@ -46,7 +46,7 @@ class tradeStrategy:
         # pprint.pprint(config)
 
         ## global 변수 선언
-        self.file_manager = config["fileControl"]
+        self.file_manager = config["data_management"]
         self.param_init = config["mainInit"]
         self.trade_config = config["tradeStock"]
 
