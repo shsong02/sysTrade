@@ -7,3 +7,5 @@ log/systemTrade.log
 .venv/
 __pycache__/
 *.log
+
+src/kis

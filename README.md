@@ -1,3 +1,139 @@
+# ST Trading System v0.1
+
+## 🚀 새로운 기능: LLM 기반 시황 분석
+
+### 📊 포괄적인 거시경제 분석
+- **시장 지수 분석**: KOSPI, KOSDAQ, KRX100 등 주요 지수 동향
+- **ETF 트렌드 분석**: 섹터별/테마별 ETF 성과 및 자금 흐름
+- **섹터 로테이션**: 21개 주요 업종별 성과 및 로테이션 패턴
+- **테마 분석**: AI/반도체, 2차전지, 바이오 등 10개 핫 테마 추적
+- **🤖 AI 기반 시황 분석**: OpenAI o3-mini 모델을 활용한 전문적 시장 분석
+
+### 🔧 환경 설정
+
+#### 1. OpenAI API 키 설정
+프로젝트 루트에 `.env` 파일을 생성하고 다음 내용을 추가하세요:
+
+```bash
+# OpenAI API Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+
+# LLM Analysis Configuration (선택사항)
+OPENAI_MODEL=o3-mini
+OPENAI_MAX_TOKENS=4000
+OPENAI_TEMPERATURE=0.3
+```
+
+#### 2. 필요 패키지 설치
+```bash
+pip install openai python-dotenv tiktoken
+```
+
+#### 3. LLM 분석 설정 (config.yaml)
+```yaml
+searchMacro:
+  llm_analysis:
+    enabled: true                     # LLM 분석 활성화
+    model: "o3-mini"                 # OpenAI 모델명
+    analysis_scope:
+      market_overview: true          # 전체 시장 개관
+      sector_analysis: true          # 섹터별 상세 분석
+      etf_trends: true              # ETF 트렌드 분석
+      theme_analysis: true          # 테마별 분석
+      technical_indicators: true     # 기술적 지표 분석
+      sentiment_analysis: true       # 시장 심리 분석
+```
+
+### 📋 LLM 분석 결과
+- **📊 시장 전체 개관**: 전반적인 시장 방향성과 투자자 심리
+- **🏭 섹터별 상세 분석**: 업종별 성과 배경과 투자 전략
+- **🏛️ ETF 트렌드 분석**: ETF를 통한 자금 흐름과 투자 선호도
+
+## 🔍 종목 발굴 시스템 (Discovery Mode)
+
+### 📋 5단계 종목 발굴 프로세스
+1. **[1/5] 거시경제 상황 분석**: 시장 전반적 흐름과 투자 환경 파악
+2. **[2/5] 재무제표 기반 종목 스크리닝**: 기업의 재무 건전성 평가
+3. **[3/5] 테마/업종별 종목 검색**: 시장 주도주와 테마주 발굴
+4. **[4/5] 최종 투자 후보 종목 선정**: 종합적 분석을 통한 후보 선별
+5. **[5/5] 결과 저장 및 리포트 생성**: 분석 결과 정리 및 보고서 작성
+
+### ⚙️ Discovery 단계별 설정
+
+`config.yaml`에서 각 단계를 개별적으로 활성화/비활성화할 수 있습니다:
+
+```yaml
+discovery:
+  # 종목 발굴 단계별 활성화 설정
+  steps:
+    macro_analysis: true             # [1/5] 거시경제 상황 분석
+    finance_screening: true          # [2/5] 재무제표 기반 종목 스크리닝
+    theme_sector_search: true        # [3/5] 테마/업종별 종목 검색
+    candidate_selection: true        # [4/5] 최종 투자 후보 종목 선정
+    report_generation: true          # [5/5] 결과 저장 및 리포트 생성
+    
+  # 각 단계별 세부 설정
+  macro_analysis:
+    enabled: true
+    skip_on_error: false            # 에러 발생 시 다음 단계 진행 여부
+    timeout_minutes: 30             # 타임아웃 (분)
+    
+  theme_sector_search:
+    enabled: true
+    search_options:
+      market_leader: true           # 시장 주도주 검색
+      theme_upjong: true           # 테마/업종 검색
+      
+  candidate_selection:
+    enabled: true
+    max_candidates: 50              # 최대 후보 종목 수
+    
+  # 전체 Discovery 설정
+  general:
+    continue_on_step_failure: false  # 단계 실패 시 전체 중단 여부
+    max_total_runtime_minutes: 120  # 전체 최대 실행 시간
+```
+
+### 🎛️ 주요 설정 옵션
+
+#### 단계별 활성화/비활성화
+- 각 단계를 `true`/`false`로 개별 제어
+- 필요한 단계만 선택적으로 실행 가능
+
+#### 에러 처리 옵션
+- `skip_on_error`: 개별 단계에서 에러 발생 시 다음 단계 진행 여부
+- `continue_on_step_failure`: 전체적으로 단계 실패 시 중단 여부
+
+#### 성능 제어
+- `timeout_minutes`: 각 단계별 최대 실행 시간
+- `max_candidates`: 후보 종목 수 제한
+- `max_total_runtime_minutes`: 전체 최대 실행 시간
+
+### 🏃‍♂️ 실행 방법
+```bash
+python main.py --mode discovery
+```
+
+### 📊 출력 결과
+- 단계별 실행 상태와 결과 로그
+- 활성화된 단계 목록 표시
+- 에러 발생 시 상세 정보와 대응 방안
+- 최종 후보 종목 리스트와 분석 리포트
+- **🔥 테마별 분석**: 핫 테마의 지속성과 신흥 테마 발굴
+- **📈 기술적 지표 분석**: 차트 패턴과 기술적 전망
+- **💭 시장 심리 분석**: 투자자 심리와 행동경제학적 관점
+- **🎯 종합 투자 전략**: 단기/중기/장기 투자 전략 및 리스크 관리
+
+### 📁 리포트 저장 구조
+```
+./data/processed/macro_analysis/YYYYMMDD/
+├── macro_analysis_report_YYYYMMDD_HHMMSS.json    # 상세 데이터
+├── macro_analysis_summary_YYYYMMDD_HHMMSS.txt    # AI 분석 리포트
+└── charts/                                        # ETF 차트들
+    ├── 122630_KODEX_레버리지.csv
+    └── ...
+```
+
 # 📈 ST (System Trading) v0.1
 
 한국투자증권 API를 활용한 종합 주식 자동 거래 시스템

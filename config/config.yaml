@@ -139,6 +139,62 @@ strategies:
   strategy_templates_path: "./strategy_templates/"
 
 ###########################################
+# 🔍 NEW: 종목 발굴 설정 (Discovery Configuration)
+###########################################
+discovery:
+  # 종목 발굴 단계별 활성화 설정
+  steps:
+    macro_analysis: false             # [1/5] 거시경제 상황 분석
+    finance_screening: true          # [2/5] 재무제표 기반 종목 스크리닝
+    theme_sector_search: true        # [3/5] 테마/업종별 종목 검색
+    candidate_selection: true        # [4/5] 최종 투자 후보 종목 선정
+    report_generation: true          # [5/5] 결과 저장 및 리포트 생성
+    
+  # 각 단계별 세부 설정
+  macro_analysis:
+    enabled: true
+    skip_on_error: false            # 에러 발생 시 다음 단계 진행 여부
+    timeout_minutes: 30             # 타임아웃 (분)
+    
+  finance_screening:
+    enabled: true
+    skip_on_error: false
+    timeout_minutes: 15
+    min_score_threshold: 50         # 최소 재무 점수
+    
+  theme_sector_search:
+    enabled: true
+    skip_on_error: false
+    timeout_minutes: 20
+    
+    # 세부 검색 옵션
+    search_options:
+      market_leader: true           # 시장 주도주 검색
+      theme_upjong: true           # 테마/업종 검색
+      
+  candidate_selection:
+    enabled: true
+    skip_on_error: false
+    timeout_minutes: 10
+    max_candidates: 50              # 최대 후보 종목 수
+    
+  report_generation:
+    enabled: true
+    skip_on_error: true             # 리포트 생성 실패해도 진행
+    timeout_minutes: 5
+    
+    # 리포트 옵션
+    include_charts: true
+    include_analysis: true
+    save_to_database: false
+    
+  # 전체 Discovery 설정
+  general:
+    continue_on_step_failure: false  # 단계 실패 시 전체 중단 여부
+    parallel_processing: false      # 병렬 처리 (미래 기능)
+    max_total_runtime_minutes: 120  # 전체 최대 실행 시간
+
+###########################################
 # 📱 NEW: UI 설정
 ###########################################
 ui:
@@ -261,6 +317,63 @@ trading:
 
 
 searchMacro:
+  # 거시경제 분석 기간 설정
+  periods:
+    analysis_months: 3                # 분석 기간 (개월)
+    chart_months: 12                  # 차트 생성 기간 (개월)
+    comparison_months: 6              # 비교 분석 기간 (개월)
+    
+  # 분석 대상 설정
+  analysis_targets:
+    etf: true                         # ETF 분석
+    sectors: true                     # 섹터별 분석
+    market_indices: true              # 시장 지수 분석
+    themes: true                      # 테마별 분석
+    
+  # 데이터 수집 설정
+  data_collection:
+    etf_min_volume: 1000000          # ETF 최소 거래량 (원)
+    sector_top_count: 10             # 섹터별 상위 종목 수
+    theme_top_count: 5               # 테마별 상위 종목 수
+    
+  # 리포트 설정
+  report:
+    save_path: "./data/macro_analysis/"
+    generate_charts: true
+    generate_summary: true
+    include_recommendations: true
+    
+  # LLM 기반 시황 분석 설정
+  llm_analysis:
+    enabled: true                     # LLM 분석 활성화
+    model: "o3-mini"                 # OpenAI 모델명
+    max_tokens: 4000                 # 최대 토큰 수
+    temperature: 0.3                 # 창의성 수준 (0.0-1.0)
+    
+    # 분석 범위 설정
+    analysis_scope:
+      market_overview: true          # 전체 시장 개관
+      sector_analysis: true          # 섹터별 상세 분석
+      etf_trends: true              # ETF 트렌드 분석
+      theme_analysis: true          # 테마별 분석
+      technical_indicators: true     # 기술적 지표 분석
+      sentiment_analysis: true       # 시장 심리 분석
+      
+    # 분석 기간별 설정
+    period_analysis:
+      short_term: true              # 단기 (1-7일)
+      medium_term: true             # 중기 (1-4주)
+      long_term: true               # 장기 (1-3개월)
+      
+    # 리포트 형식
+    report_format:
+      executive_summary: true       # 요약 리포트
+      detailed_analysis: true       # 상세 분석
+      investment_recommendations: true  # 투자 권고
+      risk_assessment: true         # 위험 평가
+      market_outlook: true          # 시장 전망
+    
+  # 기존 설정 (호환성 유지)
   config:
     change_period: 1
     chart_period: 300

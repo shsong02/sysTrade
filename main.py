@@ -318,67 +318,143 @@ class STSystemManager:
         logger.info("=== 종목 발굴 모드 시작 ===")
         logger.info("=" * 60)
         
+        # Discovery 설정 로드
+        discovery_config = self.config.get('discovery', {})
+        steps_config = discovery_config.get('steps', {})
+        general_config = discovery_config.get('general', {})
+        continue_on_failure = general_config.get('continue_on_step_failure', False)
+        
+        # 활성화된 단계 확인
+        enabled_steps = []
+        for step_name, enabled in steps_config.items():
+            if enabled:
+                enabled_steps.append(step_name)
+        
+        logger.info(f"활성화된 단계: {enabled_steps}")
+        
+        # 결과 저장용 변수
+        macro_result = None
+        candidates = []
+        
         try:
             # 1. 거시경제 상황 분석
-            logger.info("[1/5] 거시경제 상황 분석 시작")
-            macro_search = self.modules['macro_search']
-            try:
-                macro_result = macro_search.run()
-                logger.debug("거시경제 분석 완료")
-                logger.debug(f"분석 결과 요약: {macro_result.get('summary', '정보 없음')}")
-            except Exception as e:
-                logger.error(f"거시경제 분석 실패: {str(e)}")
-                raise
+            if steps_config.get('macro_analysis', True):
+                logger.info("[1/5] 포괄적인 거시경제 분석 시작")
+                try:
+                    macro_search = self.modules['macro_search']
+                    macro_result = macro_search.run()
+                    
+                    if 'error' not in macro_result:
+                        logger.info(f"거시경제 분석 완료 - 시장 심리: {macro_result.get('market_sentiment', 'Unknown')}")
+                        logger.info(f"분석 리포트: {macro_result.get('report_path', 'N/A')}")
+                        logger.debug(f"ETF 긍정 비율: {macro_result.get('etf_analysis', {}).get('positive_ratio', 0):.1f}%")
+                    else:
+                        logger.error(f"거시경제 분석 실패: {macro_result['error']}")
+                        if not continue_on_failure:
+                            raise Exception(macro_result['error'])
+                        
+                except Exception as e:
+                    logger.error(f"거시경제 분석 실패: {str(e)}")
+                    if not continue_on_failure:
+                        raise
+                    logger.warning("continue_on_step_failure=True로 다음 단계 진행")
+            else:
+                logger.info("[1/5] 거시경제 분석 단계 건너뜀 (disabled)")
             
             # 2. 재무제표 기반 종목 스크리닝
-            logger.info("[2/5] 재무제표 기반 종목 스크리닝 시작")
-            finance_score = self.modules['finance_score']
-            try:
-                finance_score.run()
-                logger.debug("재무제표 스크리닝 완료")
-            except Exception as e:
-                logger.error(f"재무제표 스크리닝 실패: {str(e)}")
-                raise
+            if steps_config.get('finance_screening', True):
+                logger.info("[2/5] 재무제표 기반 종목 스크리닝 시작")
+                try:
+                    finance_score = self.modules['finance_score']
+                    finance_score.run()
+                    logger.debug("재무제표 스크리닝 완료")
+                except Exception as e:
+                    logger.error(f"재무제표 스크리닝 실패: {str(e)}")
+                    if not continue_on_failure:
+                        raise
+                    logger.warning("continue_on_step_failure=True로 다음 단계 진행")
+            else:
+                logger.info("[2/5] 재무제표 스크리닝 단계 건너뜀 (disabled)")
             
             # 3. 테마/업종별 종목 검색
-            logger.info("[3/5] 테마/업종별 종목 검색 시작")
-            stock_search = self.modules['stock_search']
-            
-            logger.info("시장 주도주 검색 중...")
-            try:
-                stock_search.search_market_leader()
-                logger.debug("시장 주도주 검색 완료")
-            except Exception as e:
-                logger.error(f"시장 주도주 검색 실패: {str(e)}")
-                raise
-            
-            logger.info("테마/업종 검색 중...")
-            try:
-                stock_search.search_theme_upjong(mode=self.config['tradeStock']['scheduler']['mode'])
-                logger.debug("테마/업종 검색 완료")
-            except Exception as e:
-                logger.error(f"테마/업종 검색 실패: {str(e)}")
-                raise
+            if steps_config.get('theme_sector_search', True):
+                logger.info("[3/5] 테마/업종별 종목 검색 시작")
+                try:
+                    stock_search = self.modules['stock_search']
+                    search_options = discovery_config.get('theme_sector_search', {}).get('search_options', {})
+                    
+                    # 시장 주도주 검색
+                    if search_options.get('market_leader', True):
+                        logger.info("시장 주도주 검색 중...")
+                        try:
+                            stock_search.search_market_leader()
+                            logger.debug("시장 주도주 검색 완료")
+                        except Exception as e:
+                            logger.error(f"시장 주도주 검색 실패: {str(e)}")
+                            if not continue_on_failure:
+                                raise
+                    else:
+                        logger.info("시장 주도주 검색 건너뜀 (disabled)")
+                    
+                    # 테마/업종 검색
+                    if search_options.get('theme_upjong', True):
+                        logger.info("테마/업종 검색 중...")
+                        try:
+                            stock_search.search_theme_upjong(mode=self.config['tradeStock']['scheduler']['mode'])
+                            logger.debug("테마/업종 검색 완료")
+                        except Exception as e:
+                            logger.error(f"테마/업종 검색 실패: {str(e)}")
+                            if not continue_on_failure:
+                                raise
+                    else:
+                        logger.info("테마/업종 검색 건너뜀 (disabled)")
+                        
+                except Exception as e:
+                    logger.error(f"테마/업종별 종목 검색 실패: {str(e)}")
+                    if not continue_on_failure:
+                        raise
+                    logger.warning("continue_on_step_failure=True로 다음 단계 진행")
+            else:
+                logger.info("[3/5] 테마/업종별 종목 검색 단계 건너뜀 (disabled)")
             
             # 4. 최종 투자 후보 종목 선정
-            logger.info("[4/5] 최종 투자 후보 종목 선정 시작")
-            try:
-                candidates = self._select_final_candidates()
-                logger.info(f"후보 종목 선정 완료: 총 {len(candidates)}개 종목")
-                if candidates:
-                    logger.debug(f"상위 5개 후보: {[c['name'] for c in candidates[:5]]}")
-            except Exception as e:
-                logger.error(f"후보 종목 선정 실패: {str(e)}")
-                raise
+            if steps_config.get('candidate_selection', True):
+                logger.info("[4/5] 최종 투자 후보 종목 선정 시작")
+                try:
+                    candidates = self._select_final_candidates()
+                    max_candidates = discovery_config.get('candidate_selection', {}).get('max_candidates', 50)
+                    
+                    if len(candidates) > max_candidates:
+                        candidates = candidates[:max_candidates]
+                        logger.info(f"후보 종목을 최대 {max_candidates}개로 제한")
+                    
+                    logger.info(f"후보 종목 선정 완료: 총 {len(candidates)}개 종목")
+                    if candidates:
+                        logger.debug(f"상위 5개 후보: {[c['name'] for c in candidates[:5]]}")
+                except Exception as e:
+                    logger.error(f"후보 종목 선정 실패: {str(e)}")
+                    if not continue_on_failure:
+                        raise
+                    logger.warning("continue_on_step_failure=True로 다음 단계 진행")
+                    candidates = []  # 빈 리스트로 초기화
+            else:
+                logger.info("[4/5] 최종 투자 후보 종목 선정 단계 건너뜀 (disabled)")
             
             # 5. 결과 저장 및 리포트 생성
-            logger.info("[5/5] 결과 저장 및 리포트 생성 시작")
-            try:
-                self._generate_discovery_report(candidates, macro_result)
-                logger.debug("리포트 생성 완료")
-            except Exception as e:
-                logger.error(f"리포트 생성 실패: {str(e)}")
-                raise
+            if steps_config.get('report_generation', True):
+                logger.info("[5/5] 결과 저장 및 리포트 생성 시작")
+                try:
+                    self._generate_discovery_report(candidates, macro_result)
+                    logger.debug("리포트 생성 완료")
+                except Exception as e:
+                    logger.error(f"리포트 생성 실패: {str(e)}")
+                    # 리포트 생성은 기본적으로 skip_on_error=True
+                    skip_on_error = discovery_config.get('report_generation', {}).get('skip_on_error', True)
+                    if not skip_on_error and not continue_on_failure:
+                        raise
+                    logger.warning("리포트 생성 실패하지만 계속 진행")
+            else:
+                logger.info("[5/5] 결과 저장 및 리포트 생성 단계 건너뜀 (disabled)")
             
             logger.info("=" * 60)
             logger.info(f"종목 발굴 완료 - 총 {len(candidates)}개 후보 종목 선정")
@@ -481,18 +557,74 @@ class STSystemManager:
             logger.error(f"리포트 생성 중 오류: {e}")
 
 def create_directories():
-    """필요한 디렉토리 생성"""
-    directories = [
-        "./log", "./data", "./data/stock_data", 
-        "./data/backtest_results", "./data/news",
-        "./data/discovery_reports", "./data/search_stocks",
-        "./data/monitor_stocks", "./data/finance_score",
-        "./data/system_trade", "./models", "./models/nlp"
+    """필요한 디렉토리 생성 - DB 저장을 고려한 구조"""
+    # 기본 디렉토리 구조
+    base_directories = [
+        "./log", 
+        "./data", 
+        "./models", 
+        "./models/nlp"
     ]
+    
+    # 데이터베이스 스키마를 고려한 데이터 디렉토리 구조
+    data_directories = [
+        # 원시 데이터 (Raw Data)
+        "./data/raw/stock_prices",           # 주식 가격 데이터
+        "./data/raw/market_data",            # 시장 데이터
+        "./data/raw/financial_statements",   # 재무제표 데이터
+        "./data/raw/news",                   # 뉴스 데이터
+        "./data/raw/economic_indicators",    # 경제 지표
+        
+        # 처리된 데이터 (Processed Data)
+        "./data/processed/stock_analysis",   # 주식 분석 결과
+        "./data/processed/sector_analysis",  # 섹터 분석 결과
+        "./data/processed/macro_analysis",   # 거시경제 분석 결과
+        "./data/processed/strategy_signals", # 전략 신호
+        "./data/processed/risk_metrics",     # 리스크 지표
+        
+        # 분석 결과 (Analytics)
+        "./data/analytics/backtest_results", # 백테스팅 결과
+        "./data/analytics/performance",      # 성과 분석
+        "./data/analytics/reports",          # 리포트
+        "./data/analytics/charts",           # 차트 이미지
+        
+        # 거래 데이터 (Trading)
+        "./data/trading/positions",          # 포지션 데이터
+        "./data/trading/orders",             # 주문 데이터
+        "./data/trading/transactions",       # 거래 내역
+        "./data/trading/portfolio",          # 포트폴리오 상태
+        
+        # 설정 및 메타데이터 (Configuration & Metadata)
+        "./data/config/strategies",          # 전략 설정
+        "./data/config/parameters",          # 파라미터 설정
+        "./data/metadata/symbols",           # 종목 메타데이터
+        "./data/metadata/sectors",           # 섹터 정보
+        "./data/metadata/themes",            # 테마 정보
+        
+        # 임시 및 캐시 (Temporary & Cache)
+        "./data/cache/market_data",          # 시장 데이터 캐시
+        "./data/cache/calculations",         # 계산 결과 캐시
+        "./data/temp/downloads",             # 임시 다운로드
+        "./data/temp/processing",            # 처리 중 데이터
+        
+        # 백업 (Backup)
+        "./data/backup/daily",               # 일별 백업
+        "./data/backup/weekly",              # 주별 백업
+        "./data/backup/monthly",             # 월별 백업
+        
+        # 기존 호환성을 위한 디렉토리
+        "./data/search_stocks",
+        "./data/monitor_stocks", 
+        "./data/finance_score",
+        "./data/system_trade",
+        "./data/discovery_reports"
+    ]
+    
+    all_directories = base_directories + data_directories
     
     logger.info("시스템 디렉토리 구조 확인 중...")
     created_count = 0
-    for directory in directories:
+    for directory in all_directories:
         try:
             if not os.path.exists(directory):
                 os.makedirs(directory)
@@ -508,6 +640,35 @@ def create_directories():
         logger.info(f"총 {created_count}개의 새 디렉토리가 생성되었습니다.")
     else:
         logger.info("모든 시스템 디렉토리가 정상입니다.")
+        
+def create_daily_directories(base_path: str, date_str: str = None) -> str:
+    """
+    날짜별 디렉토리 구조 생성
+    
+    Args:
+        base_path: 기본 경로
+        date_str: 날짜 문자열 (YYYYMMDD), None이면 오늘 날짜
+        
+    Returns:
+        생성된 날짜별 디렉토리 경로
+    """
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y%m%d")
+    
+    # 년/월/일 구조로 디렉토리 생성
+    year = date_str[:4]
+    month = date_str[4:6]
+    day = date_str[6:8]
+    
+    daily_path = os.path.join(base_path, year, month, day)
+    
+    try:
+        os.makedirs(daily_path, exist_ok=True)
+        logger.debug(f"날짜별 디렉토리 생성/확인: {daily_path}")
+        return daily_path
+    except Exception as e:
+        logger.error(f"날짜별 디렉토리 생성 실패 ({daily_path}): {str(e)}")
+        raise
 
 def main():
     """메인 실행 함수"""
