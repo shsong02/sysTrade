@@ -9,3 +9,6 @@ __pycache__/
 *.log
 
 src/kis
+
+.env
+.env
