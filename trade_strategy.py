@@ -93,53 +93,185 @@ class tradeStrategy:
             df_out = pd.DataFrame()
 
             ## advanced 정보 (일자별 PER, ..)
-            df_chart2 = stock.get_market_fundamental(dates[0], dates[1], code, freq='d')
-            if len(df_chart2) == 0 :  ## api 가 처리 못하는 ticker 일 경우 대응
+            try:
+                df_chart2 = stock.get_market_fundamental(dates[0], dates[1], code, freq='d')
+                if df_chart2 is not None and not df_chart2.empty:
+                    # 필요한 컬럼만 선택하고 누락된 컬럼은 기본값으로 채움
+                    required_columns = ['BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
+                    for col in required_columns:
+                        if col not in df_chart2.columns:
+                            df_chart2[col] = 0.0
+                    df_out = df.join(df_chart2)
+                    df_out.fillna(0, inplace=True)
+                    logger.info(f"기본 재무정보 조회 성공 (종목: {code})")
+                else:
+                    # 데이터가 없는 경우 기본값 설정
+                    cols = ['BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
+                    df_chart2 = pd.DataFrame(0, index=df.index, columns=cols)
+                    df_out = df.join(df_chart2)
+                    df_out.fillna(0, inplace=True)
+                    logger.info(f"기본 재무정보 없음 (종목: {code}) - 기본값 사용")
+            except Exception as e:
+                logger.warning(f"기본 재무정보 조회 실패 (종목: {code}): {str(e)}")
+                # 오류 발생 시 기본값 설정
                 cols = ['BPS', 'PER', 'PBR', 'EPS', 'DIV', 'DPS']
-                df_chart2[cols] = 0  # empty
+                df_chart2 = pd.DataFrame(0, index=df.index, columns=cols)
                 df_out = df.join(df_chart2)
                 df_out.fillna(0, inplace=True)
 
-            else:
-                df_out = df.join(df_chart2)
-
             ##일자별 시가 총액 (시가총액, 거래량, 거래대금, 상장주식수)
-            df_chart3 = stock.get_market_cap(dates[0], dates[1], code)
-            df_out = df_out.join(df_chart3)
+            try:
+                df_chart3 = stock.get_market_cap(dates[0], dates[1], code)
+                if df_chart3 is not None and not df_chart3.empty:
+                    df_out = df_out.join(df_chart3)
+                    logger.info(f"시가총액 정보 조회 성공 (종목: {code})")
+                else:
+                    # 데이터가 없는 경우 기본값 설정
+                    cols = ['시가총액', '거래량', '거래대금', '상장주식수']
+                    df_chart3 = pd.DataFrame(0, index=df_out.index, columns=cols)
+                    df_out = df_out.join(df_chart3)
+                    logger.info(f"시가총액 정보 없음 (종목: {code}) - 기본값 사용")
+            except Exception as e:
+                logger.warning(f"시가총액 정보 조회 실패 (종목: {code}): {str(e)}")
+                # 오류 발생 시 기본값 설정
+                cols = ['시가총액', '거래량', '거래대금', '상장주식수']
+                df_chart3 = pd.DataFrame(0, index=df_out.index, columns=cols)
+                df_out = df_out.join(df_chart3)
 
             ## 투자자별 거래량 (누적 순매수를 계산)
-            df_chart4 = stock.get_market_trading_volume_by_date(dates[0], dates[1], code)
-            df_chart4['VolumeOrgan'] = 0
-            df_chart4['VolumeForeign'] = 0
-            df_chart4['VolumeEtc'] = 0
-            df_chart4['VolumePersonal'] = 0
-            for cnt, idx in enumerate(df_chart4.index):
-                if cnt == 0 :
-                    df_chart4.at[idx, 'VolumeOrgan']     = df_chart4.at[idx, '기관합계']
-                    df_chart4.at[idx, 'VolumeEtc']       = df_chart4.at[idx, '기타법인']
-                    df_chart4.at[idx, 'VolumePersonal']  = df_chart4.at[idx, '개인']
-                    df_chart4.at[idx, 'VolumeForeign']   = df_chart4.at[idx, '외국인합계']
+            try:
+                df_chart4 = stock.get_market_trading_volume_by_date(dates[0], dates[1], code)
+                if df_chart4 is not None and not df_chart4.empty:
+                    # 누적 순매수 계산을 위한 새로운 컬럼 초기화
+                    volume_columns = ['VolumeOrgan', 'VolumeForeign', 'VolumeEtc', 'VolumePersonal']
+                    for col in volume_columns:
+                        df_chart4[col] = 0
+                    
+                    # 누적 순매수 계산
+                    for cnt, idx in enumerate(df_chart4.index):
+                        if cnt == 0:
+                            if '기관합계' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeOrgan'] = df_chart4.at[idx, '기관합계']
+                            if '기타법인' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeEtc'] = df_chart4.at[idx, '기타법인']
+                            if '개인' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumePersonal'] = df_chart4.at[idx, '개인']
+                            if '외국인합계' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeForeign'] = df_chart4.at[idx, '외국인합계']
+                        else:
+                            if '기관합계' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeOrgan'] = df_chart4.at[idxp, 'VolumeOrgan'] + df_chart4.at[idx, '기관합계']
+                            if '기타법인' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeEtc'] = df_chart4.at[idxp, 'VolumeEtc'] + df_chart4.at[idx, '기타법인']
+                            if '개인' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumePersonal'] = df_chart4.at[idxp, 'VolumePersonal'] + df_chart4.at[idx, '개인']
+                            if '외국인합계' in df_chart4.columns:
+                                df_chart4.at[idx, 'VolumeForeign'] = df_chart4.at[idxp, 'VolumeForeign'] + df_chart4.at[idx, '외국인합계']
+                        idxp = idx
+                    
+                    df_out = df_out.join(df_chart4)
+                    logger.info(f"투자자별 거래량 정보 조회 성공 (종목: {code})")
                 else:
-                    df_chart4.at[idx, 'VolumeOrgan']     = df_chart4.at[idxp, 'VolumeOrgan']    +  df_chart4.at[idx, '기관합계']
-                    df_chart4.at[idx, 'VolumeEtc']       = df_chart4.at[idxp, 'VolumeEtc']      + df_chart4.at[idx, '기타법인']
-                    df_chart4.at[idx, 'VolumePersonal']  = df_chart4.at[idxp, 'VolumePersonal'] + df_chart4.at[idx, '개인']
-                    df_chart4.at[idx, 'VolumeForeign']   = df_chart4.at[idxp, 'VolumeForeign']  + df_chart4.at[idx, '외국인합계']
+                    # 데이터가 없는 경우 기본값 설정
+                    volume_columns = ['VolumeOrgan', 'VolumeForeign', 'VolumeEtc', 'VolumePersonal']
+                    df_chart4 = pd.DataFrame(0, index=df_out.index, columns=volume_columns)
+                    df_out = df_out.join(df_chart4)
+                    logger.info(f"투자자별 거래량 정보 없음 (종목: {code}) - 기본값 사용")
+            except Exception as e:
+                logger.warning(f"투자자별 거래량 정보 조회 실패 (종목: {code}): {str(e)}")
+                # 오류 발생 시 기본값 설정
+                volume_columns = ['VolumeOrgan', 'VolumeForeign', 'VolumeEtc', 'VolumePersonal']
+                df_chart4 = pd.DataFrame(0, index=df_out.index, columns=volume_columns)
+                df_out = df_out.join(df_chart4)
 
-                idxp = idx
+            ##일자별 외국인 보유량 및 외국인 한도소진률 - 안전한 처리
+            # 외국인 보유량 정보가 없을 때 기본값 먼저 추가
+            df_out['외국인_보유수량'] = 0
+            df_out['외국인_지분율'] = 0.0
+            
+            try:
+                df_chart4_2 = stock.get_exhaustion_rates_of_foreign_investment(dates[0], dates[1], code)
+                
+                if df_chart4_2 is not None and not df_chart4_2.empty:
+                    # 컬럼이 존재하는지 확인 후 삭제
+                    columns_to_drop = ['상장주식수', '한도수량', '한도소진률']
+                    existing_columns = [col for col in columns_to_drop if col in df_chart4_2.columns]
+                    if existing_columns:
+                        df_chart4_2.drop(existing_columns, axis=1, inplace=True)
+                    
+                    rename_dict = {}
+                    if '보유수량' in df_chart4_2.columns:
+                        rename_dict['보유수량'] = '외국인_보유수량'
+                    if '지분율' in df_chart4_2.columns:
+                        rename_dict['지분율'] = '외국인_지분율'
+                    
+                    if rename_dict:
+                        df_chart4_2.rename(columns=rename_dict, inplace=True)
+                    
+                    # 기존 기본값 컬럼 제거 후 조인
+                    for col in ['외국인_보유수량', '외국인_지분율']:
+                        if col in df_chart4_2.columns and col in df_out.columns:
+                            df_out.drop(columns=[col], inplace=True)
+                    
+                    df_out = df_out.join(df_chart4_2)
+                    logger.info(f"외국인 보유량 정보 조회 성공 (종목: {code})")
+                else:
+                    logger.info(f"외국인 보유량 정보 없음 (종목: {code}) - 기본값 사용")
+                    
+            except Exception as e:
+                logger.info(f"외국인 보유량 정보 조회 불가 (종목: {code}) - 기본값 사용: {str(e)}")
+                # 이미 기본값이 설정되어 있으므로 추가 작업 불필요
 
-            df_out = df_out.join(df_chart4)
-
-            ##일자별 외국인 보유량 및 외국인 한도소진률
-            df_chart4_2 = stock.get_exhaustion_rates_of_foreign_investment(dates[0], dates[1], code)
-            df_chart4_2.drop(['상장주식수', '한도수량', '한도소진률' ], axis=1, inplace=True)  ## 중복
-            df_chart4_2.rename(columns={'보유수량': '외국인_보유수량',  '지분율':'외국인_지분율'}, inplace=True)
-            df_out = df_out.join(df_chart4_2)
-
-            ## 공매도 정보
-            df_chart5 = stock.get_shorting_balance_by_date(dates[0], dates[1], code)
-            df_chart5.drop(['상장주식수', '시가총액' ], axis=1, inplace=True)  ## 중복
-            df_chart5.rename(columns={'비중': '공매도비중', }, inplace=True)
-            df_out = df_out.join(df_chart5)
+            ## 공매도 정보 - 안전한 처리
+            # 공매도 정보가 없을 때 기본값 먼저 추가
+            df_out['공매도비중'] = 0.0
+            df_out['공매도잔고'] = 0
+            
+            try:
+                # pykrx API 호출 시도 - 더 안전한 방식으로 처리
+                try:
+                    df_chart5 = stock.get_shorting_balance_by_date(dates[0], dates[1], code)
+                except Exception as api_error:
+                    logger.warning(f"공매도 API 호출 실패 (종목: {code}): {str(api_error)}")
+                    df_chart5 = None
+                
+                if df_chart5 is not None and not df_chart5.empty and len(df_chart5.columns) > 0:
+                    try:
+                        # 컬럼이 존재하는지 확인 후 삭제
+                        columns_to_drop = ['상장주식수', '시가총액']
+                        existing_columns = [col for col in columns_to_drop if col in df_chart5.columns]
+                        if existing_columns:
+                            df_chart5.drop(existing_columns, axis=1, inplace=True)
+                        
+                        # 컬럼명 정리
+                        rename_dict = {}
+                        if '비중' in df_chart5.columns:
+                            rename_dict['비중'] = '공매도비중'
+                        if '공매도잔고' in df_chart5.columns:
+                            rename_dict['공매도잔고'] = '공매도잔고'
+                        elif '잔고' in df_chart5.columns:
+                            rename_dict['잔고'] = '공매도잔고'
+                        
+                        if rename_dict:
+                            df_chart5.rename(columns=rename_dict, inplace=True)
+                            
+                            # 기존 기본값 컬럼 제거 후 조인
+                            for col in ['공매도비중', '공매도잔고']:
+                                if col in df_chart5.columns and col in df_out.columns:
+                                    df_out.drop(columns=[col], inplace=True)
+                            
+                            df_out = df_out.join(df_chart5)
+                            logger.info(f"공매도 정보 조회 성공 (종목: {code})")
+                        else:
+                            logger.info(f"공매도 정보 컬럼 매핑 실패 (종목: {code}) - 기본값 사용")
+                    except Exception as process_error:
+                        logger.warning(f"공매도 정보 처리 실패 (종목: {code}): {str(process_error)}")
+                else:
+                    logger.info(f"공매도 정보 없음 (종목: {code}) - 기본값 사용")
+                    
+            except Exception as e:
+                logger.warning(f"공매도 정보 조회 실패 (종목: {code}): {str(e)}")
+                # 이미 기본값이 설정되어 있으므로 추가 작업 불필요
 
             ## 코스피 지수 확인용
             df_krx = stock.get_index_ohlcv(st, end, "1028")  ## kospi200

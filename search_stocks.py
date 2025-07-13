@@ -17,8 +17,6 @@ from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 from pykrx import stock
 
-from backtesting import Backtest
-
 ## plot
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -28,7 +26,7 @@ import seaborn as sns
 from tools.news_crawler import newsCrawler
 from trade_strategy import tradeStrategy
 from tools import st_utils as stu
-from back_test import backTestCustom
+# from back_test import backTestCustom  # 필요시에만 import
 
 ## warning 무시
 import warnings
@@ -92,14 +90,10 @@ class searchStocks :
                 self.params = config["searchStock"]["market_leader"]["from_name"]["params"]
                 self.config = config["searchStock"]["market_leader"]["from_name"]["config"]
                 logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
-            ## 함수 실행
-            self.search_market_leader()
         else:
             self.params = config["searchStock"]["theme_upjong"]["params"]
             self.config = config["searchStock"]["theme_upjong"]["config"]
 
-            ## 함수 실행
-            self.search_theme_upjong(mode=self.mode)
 
 
     def search_theme_upjong(self, mode='theme'):
@@ -231,6 +225,7 @@ class searchStocks :
                 if sum == 0 : sum = 1  ## 거래정지 경우 -> 분모가 0 이 되는 것을 방지
 
                 r_max = 0
+                r_pnt = 0
                 for cnt, name in enumerate(names2):
                     r = round(df_data.at[idx, f"{name}.VolumeCost"] / sum, 2)
                     d = round(df_data.at[idx, f"{name}.Change"] * r, 2)
@@ -628,7 +623,7 @@ class searchStocks :
             last_d = str(df.at[name,'buy_day'])
             hold_d = str(df.at[name,'buy_hold_day'])
             earn = str(df.at[name,'priceEarning'])
-            code = str(df.at[name,'Code'])
+            code = str(df.at[name,'Symbol'])
             logger.info(f"종목명 (매수조건 만족): ({code}){name:<20}  -> 매수 신호 날짜: {last_d:<25}, 당일까지 기간: {hold_d:<25} , 당일까지 수익률: {earn}%")
 
         ## 폴더 생성
@@ -642,7 +637,7 @@ class searchStocks :
         st = tradeStrategy('./config/config.yaml')
         st.display = 'save'
         dates = stu.period_to_str(self.config["chart_period"], format="%Y%m%d")
-        for name, code in zip(df.index, df.Code):
+        for name, code in zip(df.index, df.Symbol):
             st.path = base_path+path + "chart/"
             st.name = f"{name}_{code}.png"
             st.run(code, name=name, dates=dates, data='none', mode='daily')

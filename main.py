@@ -33,7 +33,9 @@ from search_macro import searchMacro
 from finance_score import financeScore
 
 # 로거 설정
+from tools.custom_logger import configure_pykrx_logging
 logger = stu.create_logger()
+configure_pykrx_logging()
 
 class STSystemManager:
     """
@@ -64,6 +66,7 @@ class STSystemManager:
     def load_config(self) -> bool:
         """설정 파일 로딩 및 검증"""
         try:
+            logger.info("설정 파일 로딩 시작...")
             if not os.path.exists(self.config_path):
                 logger.error(f"설정 파일을 찾을 수 없습니다: {self.config_path}")
                 return False
@@ -72,10 +75,15 @@ class STSystemManager:
                 self.config = yaml.load(f, Loader=yaml.FullLoader)
                 
             logger.info(f"설정 파일 로딩 완료: {self.config_path}")
+            logger.debug(f"로드된 설정: {self.config.keys()}")
             return self._validate_config()
             
+        except yaml.YAMLError as e:
+            logger.error(f"YAML 파싱 오류: {e}")
+            return False
         except Exception as e:
-            logger.error(f"설정 파일 로딩 실패: {e}")
+            logger.error(f"설정 파일 로딩 실패: {str(e)}")
+            logger.exception("상세 오류:")
             return False
             
     def _validate_config(self) -> bool:
@@ -85,10 +93,15 @@ class STSystemManager:
             'searchMacro', 'scoreRule', 'fileControl'
         ]
         
+        logger.info("설정 파일 검증 시작...")
+        
+        # 필수 섹션 검증
         for section in required_sections:
             if section not in self.config:
                 logger.error(f"필수 설정 섹션 누락: {section}")
                 return False
+            else:
+                logger.debug(f"설정 섹션 확인: {section}")
                 
         # API 키 검증
         kis_config_path = './config/kisdev_vi.yaml'
@@ -105,51 +118,110 @@ class STSystemManager:
             logger.info("시스템 모듈 초기화 시작...")
             
             # 1. 거래 시스템 초기화
-            self.modules['trade_system'] = systemTrade(
-                mode=self.config['tradeStock']['scheduler']['mode']
-            )
+            logger.info("거래 시스템 초기화 중...")
+            try:
+                self.modules['trade_system'] = systemTrade(
+                    mode=self.config['tradeStock']['scheduler']['mode']
+                )
+                logger.debug("거래 시스템 초기화 완료")
+            except Exception as e:
+                logger.error(f"거래 시스템 초기화 실패: {str(e)}")
+                raise
             
             # 2. 전략 분석 모듈 초기화
-            self.modules['strategy'] = tradeStrategy(self.config_path)
+            logger.info("전략 분석 모듈 초기화 중...")
+            try:
+                self.modules['strategy'] = tradeStrategy(self.config_path)
+                logger.debug("전략 분석 모듈 초기화 완료")
+            except Exception as e:
+                logger.error(f"전략 분석 모듈 초기화 실패: {str(e)}")
+                raise
             
             # 3. 종목 검색 모듈 초기화
-            self.modules['stock_search'] = searchStocks(self.config_path)
+            logger.info("종목 검색 모듈 초기화 중...")
+            try:
+                self.modules['stock_search'] = searchStocks(self.config_path)
+                logger.debug("종목 검색 모듈 초기화 완료")
+            except Exception as e:
+                logger.error(f"종목 검색 모듈 초기화 실패: {str(e)}")
+                raise
             
             # 4. 거시경제 분석 모듈 초기화
-            self.modules['macro_search'] = searchMacro()
+            logger.info("거시경제 분석 모듈 초기화 중...")
+            try:
+                self.modules['macro_search'] = searchMacro()
+                logger.debug("거시경제 분석 모듈 초기화 완료")
+            except Exception as e:
+                logger.error(f"거시경제 분석 모듈 초기화 실패: {str(e)}")
+                raise
             
             # 5. 재무 점수 모듈 초기화
-            self.modules['finance_score'] = financeScore(self.config_path)
+            logger.info("재무 점수 모듈 초기화 중...")
+            try:
+                self.modules['finance_score'] = financeScore(self.config_path)
+                logger.debug("재무 점수 모듈 초기화 완료")
+            except Exception as e:
+                logger.error(f"재무 점수 모듈 초기화 실패: {str(e)}")
+                raise
             
             logger.info("모든 모듈 초기화 완료")
             return True
             
         except Exception as e:
-            logger.error(f"모듈 초기화 실패: {e}")
+            logger.error("모듈 초기화 중 치명적 오류 발생")
+            logger.exception("상세 오류:")
             return False
             
     def run_backtest_mode(self):
         """백테스팅 모드 실행"""
+        logger.info("=" * 60)
         logger.info("=== 백테스팅 모드 시작 ===")
+        logger.info("=" * 60)
         
         try:
             # 1. 종목 스크리닝
-            logger.info("1단계: 종목 스크리닝 실행")
+            logger.info("[1/3] 종목 스크리닝 실행 시작")
             stock_search = self.modules['stock_search']
             
+            logger.info("시장 주도주 검색 중...")
+            try:
+                stock_search.search_market_leader()
+                logger.debug("시장 주도주 검색 완료")
+            except Exception as e:
+                logger.error(f"시장 주도주 검색 실패: {str(e)}")
+                raise
+            
+            logger.info("테마/업종 검색 중...")
+            try:
+                stock_search.search_theme_upjong(mode=self.config['tradeStock']['scheduler']['mode'])
+                logger.debug("테마/업종 검색 완료")
+            except Exception as e:
+                logger.error(f"테마/업종 검색 실패: {str(e)}")
+                raise
+            
             # 2. 재무 점수 계산
-            logger.info("2단계: 재무 점수 계산")
+            logger.info("[2/3] 재무 점수 계산 시작")
             finance_score = self.modules['finance_score']
-            finance_score.run()
+            try:
+                finance_score.run()
+                logger.debug("재무 점수 계산 완료")
+            except Exception as e:
+                logger.error(f"재무 점수 계산 실패: {str(e)}")
+                raise
             
             # 3. 전략 백테스팅
-            logger.info("3단계: 전략 백테스팅 실행")
+            logger.info("[3/3] 전략 백테스팅 실행")
             # TODO: 백테스팅 로직 구현
+            logger.warning("백테스팅 로직이 아직 구현되지 않았습니다")
             
+            logger.info("=" * 60)
             logger.info("백테스팅 완료")
+            logger.info("=" * 60)
             
         except Exception as e:
-            logger.error(f"백테스팅 실행 중 오류: {e}")
+            logger.error("백테스팅 실행 중 치명적 오류 발생")
+            logger.exception("상세 오류:")
+            raise
             
     async def run_trading_mode(self):
         """실시간 거래 모드 실행"""
@@ -227,6 +299,8 @@ class STSystemManager:
             # 2. 종목 스크리닝
             logger.info("2단계: 종목 스크리닝")
             stock_search = self.modules['stock_search']
+            stock_search.search_market_leader()
+            stock_search.search_theme_upjong(mode=self.config['tradeStock']['scheduler']['mode'])
             
             # 3. 재무 점수 계산
             logger.info("3단계: 재무 점수 계산")
@@ -240,36 +314,80 @@ class STSystemManager:
             
     def run_discovery_mode(self):
         """종목 발굴 모드 실행 (통합 종목 발굴 프로세스)"""
+        logger.info("=" * 60)
         logger.info("=== 종목 발굴 모드 시작 ===")
+        logger.info("=" * 60)
         
         try:
             # 1. 거시경제 상황 분석
-            logger.info("1단계: 거시경제 상황 분석")
+            logger.info("[1/5] 거시경제 상황 분석 시작")
             macro_search = self.modules['macro_search']
-            macro_result = macro_search.run()
+            try:
+                macro_result = macro_search.run()
+                logger.debug("거시경제 분석 완료")
+                logger.debug(f"분석 결과 요약: {macro_result.get('summary', '정보 없음')}")
+            except Exception as e:
+                logger.error(f"거시경제 분석 실패: {str(e)}")
+                raise
             
             # 2. 재무제표 기반 종목 스크리닝
-            logger.info("2단계: 재무제표 기반 종목 스크리닝")
+            logger.info("[2/5] 재무제표 기반 종목 스크리닝 시작")
             finance_score = self.modules['finance_score']
-            finance_score.run()
+            try:
+                finance_score.run()
+                logger.debug("재무제표 스크리닝 완료")
+            except Exception as e:
+                logger.error(f"재무제표 스크리닝 실패: {str(e)}")
+                raise
             
             # 3. 테마/업종별 종목 검색
-            logger.info("3단계: 테마/업종별 종목 검색 및 조건 필터링")
+            logger.info("[3/5] 테마/업종별 종목 검색 시작")
             stock_search = self.modules['stock_search']
-            # stock_search는 이미 __init__에서 실행되므로 결과만 확인
+            
+            logger.info("시장 주도주 검색 중...")
+            try:
+                stock_search.search_market_leader()
+                logger.debug("시장 주도주 검색 완료")
+            except Exception as e:
+                logger.error(f"시장 주도주 검색 실패: {str(e)}")
+                raise
+            
+            logger.info("테마/업종 검색 중...")
+            try:
+                stock_search.search_theme_upjong(mode=self.config['tradeStock']['scheduler']['mode'])
+                logger.debug("테마/업종 검색 완료")
+            except Exception as e:
+                logger.error(f"테마/업종 검색 실패: {str(e)}")
+                raise
             
             # 4. 최종 투자 후보 종목 선정
-            logger.info("4단계: 최종 투자 후보 종목 선정")
-            candidates = self._select_final_candidates()
+            logger.info("[4/5] 최종 투자 후보 종목 선정 시작")
+            try:
+                candidates = self._select_final_candidates()
+                logger.info(f"후보 종목 선정 완료: 총 {len(candidates)}개 종목")
+                if candidates:
+                    logger.debug(f"상위 5개 후보: {[c['name'] for c in candidates[:5]]}")
+            except Exception as e:
+                logger.error(f"후보 종목 선정 실패: {str(e)}")
+                raise
             
             # 5. 결과 저장 및 리포트 생성
-            logger.info("5단계: 결과 저장 및 리포트 생성")
-            self._generate_discovery_report(candidates, macro_result)
+            logger.info("[5/5] 결과 저장 및 리포트 생성 시작")
+            try:
+                self._generate_discovery_report(candidates, macro_result)
+                logger.debug("리포트 생성 완료")
+            except Exception as e:
+                logger.error(f"리포트 생성 실패: {str(e)}")
+                raise
             
+            logger.info("=" * 60)
             logger.info(f"종목 발굴 완료 - 총 {len(candidates)}개 후보 종목 선정")
+            logger.info("=" * 60)
             
         except Exception as e:
-            logger.error(f"종목 발굴 실행 중 오류: {e}")
+            logger.error("종목 발굴 실행 중 치명적 오류 발생")
+            logger.exception("상세 오류:")
+            raise
             
     def _select_final_candidates(self) -> list:
         """최종 투자 후보 종목 선정"""
@@ -372,8 +490,24 @@ def create_directories():
         "./data/system_trade", "./models", "./models/nlp"
     ]
     
+    logger.info("시스템 디렉토리 구조 확인 중...")
+    created_count = 0
     for directory in directories:
-        os.makedirs(directory, exist_ok=True)
+        try:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                logger.debug(f"디렉토리 생성: {directory}")
+                created_count += 1
+            else:
+                logger.debug(f"디렉토리 확인: {directory}")
+        except Exception as e:
+            logger.error(f"디렉토리 생성 실패 ({directory}): {str(e)}")
+            raise
+    
+    if created_count > 0:
+        logger.info(f"총 {created_count}개의 새 디렉토리가 생성되었습니다.")
+    else:
+        logger.info("모든 시스템 디렉토리가 정상입니다.")
 
 def main():
     """메인 실행 함수"""
@@ -404,53 +538,70 @@ def main():
     args = parser.parse_args()
     
     # 시스템 시작 로그
-    logger.info("=" * 60)
+    logger.info("=" * 80)
     logger.info("ST (System Trading) v0.1 시작")
+    logger.info("-" * 80)
     logger.info(f"실행 모드: {args.mode}")
     logger.info(f"설정 파일: {args.config}")
     logger.info(f"시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 60)
+    logger.info(f"실행 환경: Python {sys.version}")
+    logger.info(f"작업 디렉토리: {os.getcwd()}")
+    logger.info("=" * 80)
     
-    # 필요한 디렉토리 생성
-    create_directories()
-    
-    # 시스템 매니저 초기화
-    system_manager = STSystemManager(args.config)
-    
-    # 설정 로딩
-    if not system_manager.load_config():
-        logger.error("시스템 초기화 실패: 설정 파일 문제")
-        sys.exit(1)
-        
-    # 모듈 초기화
-    if not system_manager.initialize_modules():
-        logger.error("시스템 초기화 실패: 모듈 초기화 문제")
-        sys.exit(1)
-        
-    # 모드별 실행
     try:
-        if args.mode == 'backtest':
-            system_manager.run_backtest_mode()
+        # 필요한 디렉토리 생성
+        create_directories()
+        
+        # 시스템 매니저 초기화
+        logger.info("시스템 매니저 초기화 중...")
+        system_manager = STSystemManager(args.config)
+        
+        # 설정 로딩
+        if not system_manager.load_config():
+            logger.error("시스템 초기화 실패: 설정 파일 문제")
+            sys.exit(1)
             
-        elif args.mode == 'trading':
-            asyncio.run(system_manager.run_trading_mode())
+        # 모듈 초기화
+        if not system_manager.initialize_modules():
+            logger.error("시스템 초기화 실패: 모듈 초기화 문제")
+            sys.exit(1)
             
-        elif args.mode == 'api':
-            asyncio.run(system_manager.run_api_server(args.host, args.port))
+        # 모드별 실행
+        logger.info(f"{args.mode} 모드로 시스템을 시작합니다...")
+        
+        try:
+            if args.mode == 'backtest':
+                system_manager.run_backtest_mode()
+                
+            elif args.mode == 'trading':
+                asyncio.run(system_manager.run_trading_mode())
+                
+            elif args.mode == 'api':
+                asyncio.run(system_manager.run_api_server(args.host, args.port))
+                
+            elif args.mode == 'analysis':
+                system_manager.run_analysis_mode()
+                
+            elif args.mode == 'discovery':
+                system_manager.run_discovery_mode()
+                
+        except KeyboardInterrupt:
+            logger.warning("사용자에 의해 시스템이 중단되었습니다.")
+        except Exception as e:
+            logger.error("시스템 실행 중 예상치 못한 오류가 발생했습니다.")
+            logger.exception("상세 오류:")
+            sys.exit(1)
             
-        elif args.mode == 'analysis':
-            system_manager.run_analysis_mode()
-            
-        elif args.mode == 'discovery':
-            system_manager.run_discovery_mode()
-            
-    except KeyboardInterrupt:
-        logger.info("사용자에 의해 중단됨")
     except Exception as e:
-        logger.error(f"시스템 실행 중 예상치 못한 오류: {e}")
+        logger.critical("시스템 초기화 중 치명적 오류가 발생했습니다.")
+        logger.exception("상세 오류:")
         sys.exit(1)
+        
     finally:
+        logger.info("=" * 80)
         logger.info("ST 시스템 종료")
+        logger.info(f"종료 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 80)
 
 if __name__ == "__main__":
     main()

@@ -23,3 +23,12 @@ class CustomFormatter(logging.Formatter):
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
+
+def configure_pykrx_logging():
+    """Configure pykrx logging to prevent formatting errors"""
+    pykrx_logger = logging.getLogger('pykrx')
+    if not pykrx_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        pykrx_logger.addHandler(handler)
+        pykrx_logger.setLevel(logging.WARNING)  # Only show warnings and errors
