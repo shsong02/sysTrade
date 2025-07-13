@@ -26,7 +26,7 @@ class TradingEngineConfig:
     market_open_time: str = "09:00"
     market_close_time: str = "15:30"
     strategy_name: str = "Combined"
-    
+
 class TradingEngine:
     """
     실시간 거래 엔진

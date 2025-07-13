@@ -24,12 +24,78 @@ trading:
   pre_market_minutes: 30              # 장 시작 전 준비 시간 (분)
 
 ###########################################
+# 🗂️ NEW: 데이터 관리 설정 (프로세스 기반 구조)
+###########################################
+data_management:
+  # 기본 데이터 경로
+  base_path: "./data_new/"
+  
+  # 프로세스별 데이터 경로 (base_path 기준 상대 경로)
+  discovery:
+    base_path: "1_discovery/"
+    macro_analysis: "1_discovery/macro_analysis/"
+    stock_screening: "1_discovery/stock_screening/"
+    finance_scores: "1_discovery/finance_scores/"
+    candidates: "1_discovery/candidates/"
+    reports: "1_discovery/reports/"
+    
+  backtest:
+    base_path: "2_backtest/"
+    strategies: "2_backtest/strategies/"
+    results: "2_backtest/results/"
+    reports: "2_backtest/reports/"
+    
+  trading:
+    base_path: "3_trading/"
+    positions: "3_trading/positions/"
+    orders: "3_trading/orders/"
+    performance: "3_trading/performance/"
+    logs: "3_trading/logs/"
+    
+  shared:
+    base_path: "4_shared/"
+    market_data: "4_shared/market_data/"
+    reference: "4_shared/reference/"
+    cache: "4_shared/cache/"
+    temp: "4_shared/temp/"
+    
+  backup:
+    base_path: "5_backup/"
+    
+  # 데이터 보존 정책 (일 단위)
+  retention_policy:
+    discovery_data: 30
+    backtest_results: 90
+    trading_logs: 365
+    cache_data: 7
+    temp_files: 1
+    
+  # 백업 설정
+  backup_settings:
+    supabase:
+      enabled: false                   # Supabase 백업 활성화
+      interval_hours: 24               # 백업 주기 (시간)
+      auto_backup: true                # 자동 백업
+      
+    local:
+      enabled: true
+      retention_days: 30               # 백업 보관 기간 (일)
+    
+  # 레거시 데이터 처리
+  legacy:
+    enabled: true
+    old_path: "./data/"
+    cutoff_date: "20241201"  # YYYYMMDD 형식
+    auto_migrate: false      # 자동 마이그레이션 여부
+
+###########################################
 # 🔗 NEW: 데이터 소스 설정
 ###########################################
 data_sources:
   primary: "fdr"                       # 주 데이터 소스 (fdr, pykrx, kis)
   fallback: "pykrx"                   # 폴백 데이터 소스
   cache_duration: 300                  # 캐시 유지 시간 (초)
+  cache_path: "4_shared/cache/"  # 캐시 저장 경로 (base_path 기준)
   
   # API 설정
   kis_api:
@@ -45,6 +111,7 @@ data_sources:
       enabled: true
       rate_limit: 50
 
+###########################################
 ###########################################
 # 🔔 NEW: 알림 설정
 ###########################################
@@ -62,19 +129,7 @@ notifications:
     min_loss_pct: -3.0               # 최소 손실률 알림 기준
     position_change: true            # 포지션 변경 알림
 
-###########################################
-# 🗄️ NEW: 백업 설정
-###########################################
-backup:
-  supabase:
-    enabled: false                   # Supabase 백업 활성화
-    interval_hours: 24               # 백업 주기 (시간)
-    auto_backup: true                # 자동 백업
-    
-  local:
-    enabled: true
-    path: "./backup/"
-    retention_days: 30               # 백업 보관 기간 (일)
+
 
 ###########################################
 # 🖥️ NEW: API 서버 설정
@@ -142,6 +197,13 @@ strategies:
 # 🔍 NEW: 종목 발굴 설정 (Discovery Configuration)
 ###########################################
 discovery:
+  # 테스트 설정
+  test:
+    enabled: true                     # 테스트 모드 활성화
+    max_stocks: 5                     # 테스트용 최대 종목 수
+    quick_mode: true                  # 빠른 테스트 모드
+    skip_analysis: true              # 분석 단계 건너뛰기
+    
   # 종목 발굴 단계별 활성화 설정
   steps:
     macro_analysis: false             # [1/5] 거시경제 상황 분석
@@ -233,39 +295,6 @@ logging:
   structured: true
   json_format: true
 
-###########################################
-# 기존 설정 (Legacy Configuration)
-###########################################
-
-fileControl:
-  search_stocks:
-    path: "./data/search_stocks/"
-    name: ""
-  monitor_stocks:
-    path: "./data/monitor_stocks/"
-    name: ""
-  finance_score:
-    path: "./data/finance_score/"
-    name: ""
-  system_trade:
-    path: "./data/system_trade/"
-    name: ""
-
-  ## tools 용
-  news:
-    path: "./data/news/"
-    name: ""
-  models:
-    path: "./data/models/"
-    name: ""
-  keywords:
-    path: "./data/reference/"
-    name: ""
-  model_results:
-    keywords:
-      path: "./data/model_results/keywords/"
-      name: "종목별_업종정보_20220902.csv"
-
 ## main 설정값
 mainInit:
   enable_test: False
@@ -303,19 +332,6 @@ tradeStock:
     default_profit_change: 10 # unit: percentage
     default_holding_days: 30 # unit: days
 
-# 새로운 거래 엔진 설정
-trading:
-  max_positions: 20
-  position_size_pct: 5.0
-  stop_loss_pct: -5.0
-  take_profit_pct: 10.0
-  daily_loss_limit_pct: -10.0
-  check_interval_seconds: 10
-  market_open_time: "09:00"
-  market_close_time: "15:30"
-  strategy_name: "Combined"  # BollingerBand, RSI, Combined
-
-
 searchMacro:
   # 거시경제 분석 기간 설정
   periods:
@@ -338,7 +354,7 @@ searchMacro:
     
   # 리포트 설정
   report:
-    save_path: "./data/macro_analysis/"
+    save_path: "1_discovery/macro_analysis/"  # base_path 기준 상대 경로
     generate_charts: true
     generate_summary: true
     include_recommendations: true
@@ -489,5 +505,97 @@ scoreRule:
     - 200000000000
     - 400000000000
     - 600000000000
+
+###########################################
+# 📁 NEW: 파일 제어 설정 (base_path 기준 상대 경로)
+###########################################
+fileControl:
+  # Discovery 모드 파일 경로 (base_path 기준)
+  discovery:
+    macro_analysis:
+      path: "1_discovery/macro_analysis/"
+      filename_format: "macro_analysis_{date}_{time}.json"
+    
+    stock_screening:
+      path: "1_discovery/stock_screening/"
+      filename_format: "screening_{mode}_{date}.csv"
+      
+    finance_score:
+      path: "1_discovery/finance_scores/"
+      filename_format: "finance_scores_{date}.csv"
+      
+    candidates:
+      path: "1_discovery/candidates/"
+      filename_format: "candidates_{date}.csv"
+      
+    reports:
+      path: "1_discovery/reports/"
+      filename_format: "discovery_report_{date}_{time}.json"
+  
+  # Backtest 모드 파일 경로 (base_path 기준)
+  backtest:
+    strategies:
+      path: "2_backtest/strategies/"
+      filename_format: "strategy_{name}_{date}.json"
+      
+    results:
+      path: "2_backtest/results/"
+      filename_format: "backtest_{strategy}_{date}.csv"
+      
+    reports:
+      path: "2_backtest/reports/"
+      filename_format: "backtest_report_{date}.html"
+  
+  # Trading 모드 파일 경로 (base_path 기준)
+  trading:
+    positions:
+      path: "3_trading/positions/"
+      filename_format: "positions_{date}.json"
+      
+    orders:
+      path: "3_trading/orders/"
+      filename_format: "orders_{date}.csv"
+      
+    performance:
+      path: "3_trading/performance/"
+      filename_format: "performance_{date}.json"
+      
+    logs:
+      path: "3_trading/logs/"
+      filename_format: "trading_log_{date}.log"
+  
+  # 공통 데이터 파일 경로 (base_path 기준)
+  shared:
+    market_data:
+      path: "4_shared/market_data/"
+      filename_format: "market_data_{symbol}_{date}.csv"
+      
+    reference:
+      path: "4_shared/reference/"
+      filename_format: "reference_{type}_{date}.csv"
+      
+    cache:
+      path: "4_shared/cache/"
+      retention_hours: 24
+      
+    temp:
+      path: "4_shared/temp/"
+      auto_cleanup: true
+      retention_hours: 1
+  
+  # 백업 파일 경로 (base_path 기준)
+  backup:
+    path: "5_backup/"
+    filename_format: "backup_{type}_{date}.zip"
+    retention_days: 30
+  
+  # 레거시 호환성 (base_path 기준)
+  legacy:
+    monitor_stocks:
+      path: "1_discovery/stock_screening/"
+    search_stocks:
+      path: "1_discovery/stock_screening/"
+    system_trade:
+      path: "3_trading/logs/"
 
 

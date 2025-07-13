@@ -15,6 +15,8 @@ import argparse
 import signal
 from datetime import datetime
 from typing import Optional, Dict, Any
+import ssl
+import urllib.request
 
 import yaml
 import uvicorn
@@ -29,8 +31,8 @@ from tools import st_utils as stu
 from system_trade import systemTrade
 from trade_strategy import tradeStrategy
 from search_stocks import searchStocks
-from search_macro import searchMacro
 from finance_score import financeScore
+from search_macro import searchMacro
 
 # 로거 설정
 from tools.custom_logger import configure_pykrx_logging
@@ -322,7 +324,16 @@ class STSystemManager:
         discovery_config = self.config.get('discovery', {})
         steps_config = discovery_config.get('steps', {})
         general_config = discovery_config.get('general', {})
+        test_config = discovery_config.get('test', {})
         continue_on_failure = general_config.get('continue_on_step_failure', False)
+        
+        # 테스트 모드 확인
+        is_test_mode = test_config.get('enabled', False)
+        if is_test_mode:
+            logger.info("테스트 모드로 실행합니다.")
+            logger.info(f"최대 종목 수: {test_config.get('max_stocks', 10)}")
+            logger.info(f"빠른 테스트 모드: {test_config.get('quick_mode', True)}")
+            logger.info(f"분석 건너뛰기: {test_config.get('skip_analysis', False)}")
         
         # 활성화된 단계 확인
         enabled_steps = []
@@ -338,7 +349,7 @@ class STSystemManager:
         
         try:
             # 1. 거시경제 상황 분석
-            if steps_config.get('macro_analysis', True):
+            if steps_config.get('macro_analysis', True) and not (is_test_mode and test_config.get('skip_analysis', False)):
                 logger.info("[1/5] 포괄적인 거시경제 분석 시작")
                 try:
                     macro_search = self.modules['macro_search']
@@ -366,10 +377,27 @@ class STSystemManager:
                 logger.info("[2/5] 재무제표 기반 종목 스크리닝 시작")
                 try:
                     finance_score = self.modules['finance_score']
-                    finance_score.run()
+                    df_result = finance_score.run()
+                    
+                    # 테스트 모드인 경우 종목 수 제한
+                    if is_test_mode and test_config.get('max_stocks'):
+                        max_stocks = test_config.get('max_stocks')
+                        df_result = df_result.head(max_stocks)
+                        logger.info(f"테스트 모드: 상위 {max_stocks}개 종목만 선택")
+                    
                     logger.debug("재무제표 스크리닝 완료")
                 except Exception as e:
-                    logger.error(f"재무제표 스크리닝 실패: {str(e)}")
+                    error_msg = str(e)
+                    logger.error(f"재무제표 스크리닝 실패: {error_msg}")
+                    
+                    # SSL 인증서 문제인 경우 추가 안내
+                    if "SSL" in error_msg or "certificate" in error_msg.lower():
+                        logger.error("SSL 인증서 문제가 발생했습니다.")
+                        logger.error("해결 방법:")
+                        logger.error("1. 네트워크 연결 상태를 확인해주세요")
+                        logger.error("2. 방화벽/보안 프로그램이 차단하고 있는지 확인해주세요")
+                        logger.error("3. 잠시 후 다시 시도해주세요")
+                    
                     if not continue_on_failure:
                         raise
                     logger.warning("continue_on_step_failure=True로 다음 단계 진행")
@@ -424,6 +452,10 @@ class STSystemManager:
                     candidates = self._select_final_candidates()
                     max_candidates = discovery_config.get('candidate_selection', {}).get('max_candidates', 50)
                     
+                    # 테스트 모드인 경우 후보 수 제한
+                    if is_test_mode and test_config.get('max_stocks'):
+                        max_candidates = min(max_candidates, test_config.get('max_stocks'))
+                    
                     if len(candidates) > max_candidates:
                         candidates = candidates[:max_candidates]
                         logger.info(f"후보 종목을 최대 {max_candidates}개로 제한")
@@ -460,6 +492,11 @@ class STSystemManager:
             logger.info(f"종목 발굴 완료 - 총 {len(candidates)}개 후보 종목 선정")
             logger.info("=" * 60)
             
+            # 테스트 모드에서 빠른 종료
+            if is_test_mode and test_config.get('quick_mode', True):
+                logger.info("테스트 모드 빠른 종료")
+                return
+            
         except Exception as e:
             logger.error("종목 발굴 실행 중 치명적 오류 발생")
             logger.exception("상세 오류:")
@@ -472,9 +509,9 @@ class STSystemManager:
             import os
             from glob import glob
             
-            # 재무 점수 데이터 로드
-            finance_path = self.config['fileControl']['finance_score']['path']
-            finance_files = glob(finance_path + "*.csv")
+            # 재무 점수 데이터 로드 (새로운 경로 시스템 사용)
+            finance_path = get_data_path('fileControl.discovery.finance_score', self.config)
+            finance_files = glob(os.path.join(finance_path, "*.csv"))
             if not finance_files:
                 logger.warning("재무 점수 데이터를 찾을 수 없습니다.")
                 return []
@@ -483,9 +520,9 @@ class STSystemManager:
             latest_finance_file = max(finance_files, key=os.path.getctime)
             df_finance = pd.read_csv(latest_finance_file)
             
-            # 매수 조건 만족 종목 데이터 로드
-            monitor_path = self.config['fileControl']['monitor_stocks']['path']
-            buy_files = glob(monitor_path + "*/*/*/*/buy_list_*.csv")
+            # 매수 조건 만족 종목 데이터 로드 (새로운 경로 시스템 사용)
+            screening_path = get_data_path('fileControl.discovery.stock_screening', self.config)
+            buy_files = glob(os.path.join(screening_path, "**/buy_list_*.csv"), recursive=True)
             if not buy_files:
                 logger.warning("매수 조건 만족 종목 데이터를 찾을 수 없습니다.")
                 return []
@@ -536,15 +573,16 @@ class STSystemManager:
                 }
             }
             
-            # 리포트 저장
-            report_path = f"./data/discovery_reports/"
+            # 리포트 저장 (새로운 경로 시스템 사용)
+            report_path = get_data_path('fileControl.discovery.reports', self.config)
             os.makedirs(report_path, exist_ok=True)
             
             report_filename = f"discovery_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(report_path + report_filename, 'w', encoding='utf-8') as f:
+            full_report_path = os.path.join(report_path, report_filename)
+            with open(full_report_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
                 
-            logger.info(f"종목 발굴 리포트 저장완료: {report_path + report_filename}")
+            logger.info(f"종목 발굴 리포트 저장완료: {full_report_path}")
             
             # 요약 정보 로그 출력
             logger.info("=== 종목 발굴 결과 요약 ===")
@@ -557,90 +595,185 @@ class STSystemManager:
             logger.error(f"리포트 생성 중 오류: {e}")
 
 def create_directories():
-    """필요한 디렉토리 생성 - DB 저장을 고려한 구조"""
-    # 기본 디렉토리 구조
-    base_directories = [
-        "./log", 
-        "./data", 
-        "./models", 
-        "./models/nlp"
-    ]
-    
-    # 데이터베이스 스키마를 고려한 데이터 디렉토리 구조
-    data_directories = [
-        # 원시 데이터 (Raw Data)
-        "./data/raw/stock_prices",           # 주식 가격 데이터
-        "./data/raw/market_data",            # 시장 데이터
-        "./data/raw/financial_statements",   # 재무제표 데이터
-        "./data/raw/news",                   # 뉴스 데이터
-        "./data/raw/economic_indicators",    # 경제 지표
-        
-        # 처리된 데이터 (Processed Data)
-        "./data/processed/stock_analysis",   # 주식 분석 결과
-        "./data/processed/sector_analysis",  # 섹터 분석 결과
-        "./data/processed/macro_analysis",   # 거시경제 분석 결과
-        "./data/processed/strategy_signals", # 전략 신호
-        "./data/processed/risk_metrics",     # 리스크 지표
-        
-        # 분석 결과 (Analytics)
-        "./data/analytics/backtest_results", # 백테스팅 결과
-        "./data/analytics/performance",      # 성과 분석
-        "./data/analytics/reports",          # 리포트
-        "./data/analytics/charts",           # 차트 이미지
-        
-        # 거래 데이터 (Trading)
-        "./data/trading/positions",          # 포지션 데이터
-        "./data/trading/orders",             # 주문 데이터
-        "./data/trading/transactions",       # 거래 내역
-        "./data/trading/portfolio",          # 포트폴리오 상태
-        
-        # 설정 및 메타데이터 (Configuration & Metadata)
-        "./data/config/strategies",          # 전략 설정
-        "./data/config/parameters",          # 파라미터 설정
-        "./data/metadata/symbols",           # 종목 메타데이터
-        "./data/metadata/sectors",           # 섹터 정보
-        "./data/metadata/themes",            # 테마 정보
-        
-        # 임시 및 캐시 (Temporary & Cache)
-        "./data/cache/market_data",          # 시장 데이터 캐시
-        "./data/cache/calculations",         # 계산 결과 캐시
-        "./data/temp/downloads",             # 임시 다운로드
-        "./data/temp/processing",            # 처리 중 데이터
-        
-        # 백업 (Backup)
-        "./data/backup/daily",               # 일별 백업
-        "./data/backup/weekly",              # 주별 백업
-        "./data/backup/monthly",             # 월별 백업
-        
-        # 기존 호환성을 위한 디렉토리
-        "./data/search_stocks",
-        "./data/monitor_stocks", 
-        "./data/finance_score",
-        "./data/system_trade",
-        "./data/discovery_reports"
-    ]
-    
-    all_directories = base_directories + data_directories
-    
+    """필요한 디렉토리 생성 - base_path 참조 구조 기반"""
     logger.info("시스템 디렉토리 구조 확인 중...")
-    created_count = 0
-    for directory in all_directories:
-        try:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-                logger.debug(f"디렉토리 생성: {directory}")
-                created_count += 1
-            else:
-                logger.debug(f"디렉토리 확인: {directory}")
-        except Exception as e:
-            logger.error(f"디렉토리 생성 실패 ({directory}): {str(e)}")
-            raise
     
-    if created_count > 0:
-        logger.info(f"총 {created_count}개의 새 디렉토리가 생성되었습니다.")
-    else:
-        logger.info("모든 시스템 디렉토리가 정상입니다.")
+    try:
+        # 설정 파일 로드
+        with open('./config/config.yaml', 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            
+        data_config = config.get('data_management', {})
+        base_path = data_config.get('base_path', './data_new/')
         
+        # 프로세스별 디렉토리 생성 (base_path 기준)
+        created_count = 0
+        
+        def create_path_from_base(relative_path):
+            """base_path를 기준으로 절대 경로 생성 및 디렉토리 생성"""
+            full_path = os.path.join(base_path, relative_path)
+            if not os.path.exists(full_path):
+                os.makedirs(full_path, exist_ok=True)
+                logger.debug(f"디렉토리 생성: {full_path}")
+                return True
+            return False
+        
+        # 1. Discovery 디렉토리
+        discovery_paths = data_config.get('discovery', {})
+        for path in discovery_paths.values():
+            if isinstance(path, str):
+                if create_path_from_base(path):
+                    created_count += 1
+                
+        # 2. Backtest 디렉토리
+        backtest_paths = data_config.get('backtest', {})
+        for path in backtest_paths.values():
+            if isinstance(path, str):
+                if create_path_from_base(path):
+                    created_count += 1
+                
+        # 3. Trading 디렉토리
+        trading_paths = data_config.get('trading', {})
+        for path in trading_paths.values():
+            if isinstance(path, str):
+                if create_path_from_base(path):
+                    created_count += 1
+                
+        # 4. Shared 디렉토리
+        shared_paths = data_config.get('shared', {})
+        for path in shared_paths.values():
+            if isinstance(path, str):
+                if create_path_from_base(path):
+                    created_count += 1
+                
+        # 5. Backup 디렉토리
+        backup_path = data_config.get('backup', {}).get('base_path')
+        if backup_path:
+            if create_path_from_base(backup_path):
+                created_count += 1
+        
+        # fileControl 설정의 디렉토리도 생성 (base_path 기준)
+        file_config = config.get('fileControl', {})
+        for category in file_config.values():
+            if isinstance(category, dict):
+                for item in category.values():
+                    if isinstance(item, dict) and 'path' in item:
+                        relative_path = item['path']
+                        if create_path_from_base(relative_path):
+                            created_count += 1
+                
+        # 레거시 데이터 처리
+        if data_config.get('legacy', {}).get('enabled', True):
+            cutoff_date = data_config.get('legacy', {}).get('cutoff_date')
+            if cutoff_date:
+                _handle_legacy_data(cutoff_date)
+                
+        if created_count > 0:
+            logger.info(f"총 {created_count}개의 새 디렉토리가 생성되었습니다.")
+        else:
+            logger.info("모든 시스템 디렉토리가 정상입니다.")
+            
+    except Exception as e:
+        logger.error(f"디렉토리 생성 중 오류 발생: {str(e)}")
+        logger.exception("상세 오류:")
+        raise
+
+def _handle_legacy_data(cutoff_date: str):
+    """레거시 데이터 처리
+    
+    Args:
+        cutoff_date (str): YYYYMMDD 형식의 기준일
+    """
+    logger.info(f"레거시 데이터 처리 시작 (기준일: {cutoff_date})")
+    
+    try:
+        # 레거시 데이터 디렉토리 목록
+        legacy_dirs = [
+            "./data/search_stocks",
+            "./data/monitor_stocks",
+            "./data/finance_score",
+            "./data/system_trade",
+            "./data/news",
+            "./data/models",
+            "./data/reference",
+            "./data/model_results"
+        ]
+        
+        import shutil
+        from datetime import datetime
+        
+        cutoff = datetime.strptime(cutoff_date, "%Y%m%d")
+        
+        for dir_path in legacy_dirs:
+            if not os.path.exists(dir_path):
+                continue
+                
+            # 디렉토리 내 파일 검사
+            for root, _, files in os.walk(dir_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        # 파일 수정 시간 확인
+                        mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                        if mtime < cutoff:
+                            # 레거시 파일 삭제
+                            os.remove(file_path)
+                            logger.debug(f"레거시 파일 삭제: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"파일 처리 실패 ({file_path}): {str(e)}")
+                        
+            # 빈 디렉토리 삭제
+            try:
+                if not os.listdir(dir_path):
+                    shutil.rmtree(dir_path)
+                    logger.info(f"빈 레거시 디렉토리 삭제: {dir_path}")
+            except Exception as e:
+                logger.warning(f"디렉토리 삭제 실패 ({dir_path}): {str(e)}")
+                
+        logger.info("레거시 데이터 처리 완료")
+        
+    except Exception as e:
+        logger.error(f"레거시 데이터 처리 중 오류: {str(e)}")
+        logger.exception("상세 오류:")
+
+def get_data_path(config_key: str, config: dict = None) -> str:
+    """
+    설정 키를 기반으로 데이터 경로 생성
+    
+    Args:
+        config_key: 설정 키 (예: 'discovery.macro_analysis', 'fileControl.discovery.reports')
+        config: 설정 딕셔너리 (없으면 자동 로드)
+        
+    Returns:
+        절대 경로
+    """
+    if config is None:
+        with open('./config/config.yaml', 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+    
+    base_path = config.get('data_management', {}).get('base_path', './data_new/')
+    
+    # 키를 점으로 분리하여 중첩된 설정 접근
+    keys = config_key.split('.')
+    current = config
+    
+    try:
+        for key in keys:
+            current = current[key]
+        
+        # 경로가 문자열인 경우 base_path와 결합
+        if isinstance(current, str):
+            return os.path.join(base_path, current)
+        elif isinstance(current, dict) and 'path' in current:
+            return os.path.join(base_path, current['path'])
+        else:
+            raise ValueError(f"Invalid path configuration for key: {config_key}")
+            
+    except (KeyError, TypeError):
+        logger.error(f"설정 키를 찾을 수 없습니다: {config_key}")
+        # 기본 경로 반환
+        return os.path.join(base_path, "4_shared/temp/")
+
 def create_daily_directories(base_path: str, date_str: str = None) -> str:
     """
     날짜별 디렉토리 구조 생성
@@ -672,6 +805,14 @@ def create_daily_directories(base_path: str, date_str: str = None) -> str:
 
 def main():
     """메인 실행 함수"""
+    
+    # macOS SSL 인증서 문제 해결
+    try:
+        ssl._create_default_https_context = ssl._create_unverified_context
+        print("SSL 인증서 검증 우회 설정 완료")
+    except Exception as e:
+        print(f"SSL 설정 경고: {e}")
+    
     parser = argparse.ArgumentParser(description='ST 자동매매 시스템')
     parser.add_argument(
         '--mode', 

@@ -7,6 +7,9 @@ import zipfile
 import requests
 import platform
 from subprocess import check_output
+import ssl
+import urllib.request
+import json
 
 # multi-processing
 from multiprocessing import Pool
@@ -19,6 +22,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup as Soup
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 import FinanceDataReader as fdr
 
 # chart
@@ -50,6 +55,14 @@ logger = stu.create_logger()
 
 class financeScore:
     def __init__(self, config_file):
+
+        # SSL 인증서 문제 해결을 위한 설정 (macOS 대응)
+        try:
+            import ssl
+            ssl._create_default_https_context = ssl._create_unverified_context
+            logger.info("SSL 인증서 검증 우회 설정 완료")
+        except Exception as e:
+            logger.warning(f"SSL 설정 실패: {e}")
 
         # 설정 파일을 필수적으로 한다.
         with open(config_file, encoding="utf-8") as f:
@@ -97,9 +110,14 @@ class financeScore:
         code = code_name[0]
         name = code_name[1]
 
-        opt = webdriver.ChromeOptions()
-        opt.add_argument('headless')
-        driver = webdriver.Chrome(options=opt, executable_path=self.driver_path)
+        opt = Options()
+        opt.add_argument('--headless')
+        opt.add_argument('--no-sandbox')
+        opt.add_argument('--disable-dev-shm-usage')
+        opt.add_argument('--disable-gpu')
+        opt.add_argument('--window-size=1920,1080')
+        service = Service(executable_path=self.driver_path)
+        driver = webdriver.Chrome(service=service, options=opt)
 
         code = str(code).zfill(6)
         # 네이버 재무재표 주소
@@ -312,144 +330,145 @@ class financeScore:
         return df_out
 
     def run(self):
-        # 거래소 모든 코드 가져오기
-        '''
-            1) 거래소 코드 가져오기
-            1-2) Sector 가 없는  코드 날리기 (Sector missing 처리)
-            1-3) 파일로 저장하기
-
-            2) 종목별로 당기순이익, 시가총액, 미래 PER, 재무비율 가져오기
-            2-2) 스코어 내기
-            2-3) 스코어에 따라 순위 매기기
-        '''
-
-        # instance 생성
-
-        params = self.param_init
-        files = self.file_manager
-
-        ######################
-        ####    STEP1     ####
-        ######################
-        # 1) 테마 리스트를 작성하고 테마별 종목코드를 확인합니다. 결과는 파일로 저장합니다.
-        # krx = fdr.StockListing('KRX-DESC')
-        # 가끔 한국거래소에 서버점검 등의 이슈가 있어 fdr.StockListing 으로 상장종목을 받아오지 못할 때가 있습니다.
-        # 그럴 때는 아래의 주석을 해제하고 실습해 주세요!
-        krx = pd.read_csv("https://raw.githubusercontent.com/corazzon/finance-data-analysis/main/krx.csv")
-        # 섹터값없는 코드 삭제 (ETF...)
-        df_stocks = krx.dropna(axis=0, subset=['Sector'])
-        df_stocks.drop(['Representative','Region',], axis=1, inplace=True)
-        df_stocks.reset_index(drop=True, inplace=True)
-
-        # 1-2) FinanceDataReader (외부 패키지) 가 정상적으로 동작하지 않을 경우, 이전 작업 내용을 불러오기
-        if len(df_stocks) < 100:
-            logger.warning(
-                "FinanceDataReader 가 정상적으로 동작하지 않아 이전 작업 파일을 불러 옵니다.")
-            # CSV 파일만 필터링
-            csv_files = [f for f in os.listdir(
-                files["finance_score"]["path"]) if f.endswith('.csv')]
-
-            # 날짜 형식에 맞게 파일 이름 파싱 및 최신 파일 찾기
-            date_format = '%Y-%m-%d'
-            latest_date = datetime.strptime(
-                '2020-01-01', date_format)  # 초기 날짜 설정
-            latest_file = ''
-
-            for file_name in csv_files:
-                # 파일명에서 확장자 제외
-                file_date_str = file_name.split('.')[0].split('_')[-1]
-
+        """재무제표 기반 종목 스크리닝 실행"""
+        logger.info("재무제표 기반 종목 스크리닝 시작")
+        
+        try:
+            # 설정 파일에서 새로운 데이터 관리 구조 로드
+            with open('./config/config.yaml', 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                data_config = config.get('data_management', {})
+                
+            # 저장 경로 설정
+            storage_config = data_config.get('storage', {}).get('financial_statements', {})
+            save_path = storage_config.get('path', './data/raw/financial_statements/')
+            
+            # 저장 경로 생성
+            os.makedirs(save_path, exist_ok=True)
+            logger.info(f"저장 경로 확인: {save_path}")
+            
+            # KRX 데이터 다운로드 (캐시 파일 경로 설정)
+            cache_file = os.path.join(save_path, "krx_cache.csv")
+            krx = self.safe_download_csv("https://raw.githubusercontent.com/corazzon/finance-data-analysis/main/krx.csv", cache_file)
+            
+            # 캐시 파일 저장 (성공한 경우)
+            if len(krx) > 100:
                 try:
-                    file_date = datetime.strptime(file_date_str, date_format)
-                except ValueError:
-                    # 파일 이름이 날짜 형식이 아닌 경우 건너뜀
-                    continue
-
-                if file_date > latest_date:
-                    latest_date = file_date
-                    latest_file = file_name
-
-            # 최신 파일을 DataFrame으로 읽어오기
-            if latest_file:
-                latest_file_path = os.path.join(
-                    files["finance_score"]["path"], latest_file)
-                df_stocks = pd.read_csv(latest_file_path)
-                # origin column 만 남기기
-                filtered_columns = [
-                    col for col in df_stocks.columns if col in krx.columns]
-                df_stocks = df_stocks[filtered_columns]
-            else:
-                print("날짜 형식의 CSV 파일이 없습니다.")
-
-        def code_zfill(x):
-            x_out = str(x).zfill(6)
-            return x_out
-
-        df_stocks['Symbol'] = df_stocks['Symbol'].apply(code_zfill)
-        ######################
-        ####    STEP2     ####
-        ######################
-
-        if params["ena_step2"] is True:
+                    krx.to_csv(cache_file, index=False)
+                    logger.info(f"KRX 데이터 캐시 저장: {cache_file}")
+                except Exception as e:
+                    logger.warning(f"캐시 저장 실패: {e}")
+            
+            # 섹터값없는 코드 삭제 (ETF...)
+            df_stocks = krx.dropna(axis=0, subset=['Sector'])
+            df_stocks.drop(['Representative','Region',], axis=1, inplace=True)
+            df_stocks.reset_index(drop=True, inplace=True)
+            
+            # 데이터 검증
+            if len(df_stocks) < 100:
+                raise ValueError("유효한 종목 데이터가 너무 적습니다.")
+                
+            # 재무제표 분석 실행
             df_stocks_state = []
-
-            cpu_cnt = 8
-            pool = Pool(processes=cpu_cnt)
-
-            opt = webdriver.ChromeOptions()
-            opt.add_argument('headless')
-            drivers = []
-
-            ## Naver 크롤링 하기 위해 chrome 최신 드라이버 설치 
-            chrome_version = self.get_chrome_version()
-            self.driver_path = self.download_chromedriver(chrome_version)
-            print(f"ChromeDriver for Chrome version {chrome_version} has been downloaded and installed.")
-
-            # pylint: disable= W0612
-            for i in range(cpu_cnt):
-                drivers.append(webdriver.Chrome(
-                    options=opt, executable_path=self.driver_path))
-
-            codes = df_stocks['Symbol'].to_list()
-            names = df_stocks['Name'].to_list()
-            codes_names = list(zip(codes, names))
-
-            df_list = pool.map(self.finance_state, codes_names)  ## 병렬 처리 하기 
-
-            df_stocks_state = pd.concat(df_list)  ## 병렬 처리 결과를 하나로 합치기
-
-            # join
+            cpu_cnt = min(8, mp.cpu_count())  # CPU 코어 수에 따라 조정
+            
+            with Pool(processes=cpu_cnt) as pool:
+                codes = df_stocks['Symbol'].to_list()
+                names = df_stocks['Name'].to_list()
+                codes_names = list(zip(codes, names))
+                
+                # 진행 상황 로깅
+                total_items = len(codes_names)
+                logger.info(f"총 {total_items}개 종목 분석 시작 (CPU: {cpu_cnt}개 사용)")
+                
+                df_list = pool.map(self.finance_state, codes_names)
+                
+            # 결과 병합
+            df_stocks_state = pd.concat(df_list)
             df_stocks.set_index(keys=['Name'], inplace=True, drop=True)
-
             df_fin = df_stocks.join(df_stocks_state)
-
-            # 재무제표 조건에 만족하지 못하는 종목들은 제거
-            df_step2 = df_fin.sort_values(by='total_score', ascending=False)
-
-            ## code , Symbol 이라는 동일 column 을 혼재하여 사용 하고 있으므로, Symbol 만 남김. 23.5.4
-            if 'Symbol' in df_step2.columns:
-                # 'code' 열이 있는 경우 제거
-                if 'code' in df_step2.columns:
-                    df_step2.drop(columns=['code'], inplace=True)
+            
+            # 컬럼 정리
+            if 'Symbol' in df_fin.columns:
+                if 'code' in df_fin.columns:
+                    df_fin.drop(columns=['code'], inplace=True)
             else:
-                # 'Symbol' 열이 없는 경우 'code' 열의 이름을 'Symbol'로 변경
-                df_step2.rename(columns={'code': 'Symbol'}, inplace=True)
-            # df_step2 = df_fin[df_fin.score_drop == False]
-
-            # 시간 총액별 그룹을 나눈다. (그룹별 대응 방법이 달라질 수 있음)
-
+                df_fin.rename(columns={'code': 'Symbol'}, inplace=True)
+                
+            # 최종 결과 정렬
+            df_result = df_fin.sort_values(by='total_score', ascending=False)
+            
             # 파일 저장
-            now = datetime.now().strftime("%Y-%m-%d")
-            file_path = self.file_manager["finance_score"]["path"]
-            file_name = self.file_manager["finance_score"]["name"]
-            if file_name == "":
-                file_name = f"stock_items_{now}.csv"
-            stu.file_save(df_step2, file_path, file_name, replace=False)
-        else:  # disable step2
-            file_path = self.file_manager["finance_score"]["path"]
-            # 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
-            file_name = os.listdir('./data/finance_score/')[0]
-            df_step2 = pd.read_csv(file_path + file_name, index_col=0)
+            try:
+                now = datetime.now().strftime("%Y%m%d_%H%M%S")
+                result_filename = f"finance_score_{now}.csv"
+                result_filepath = os.path.join(save_path, result_filename)
+                
+                df_result.to_csv(result_filepath, encoding='utf-8-sig')
+                logger.info(f"재무제표 분석 결과 저장 완료: {result_filepath}")
+                logger.info(f"총 {len(df_result)}개 종목 분석됨")
+                
+                # 분석 요약 저장
+                summary = {
+                    'timestamp': now,
+                    'total_stocks': len(df_result),
+                    'high_score_stocks': len(df_result[df_result['total_score'] >= 80]),
+                    'avg_score': df_result['total_score'].mean(),
+                    'top_sectors': df_result['Sector'].value_counts().head(5).to_dict()
+                }
+                
+                summary_filename = f"finance_score_summary_{now}.json"
+                summary_filepath = os.path.join(save_path, summary_filename)
+                
+                with open(summary_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(summary, f, ensure_ascii=False, indent=2)
+                
+                logger.info("분석 요약 저장 완료")
+                return df_result
+                
+            except Exception as e:
+                logger.error(f"결과 저장 중 오류 발생: {e}")
+                logger.exception("상세 오류:")
+                raise
+                
+        except Exception as e:
+            logger.error("재무제표 분석 중 오류 발생")
+            logger.exception("상세 오류:")
+            raise
+
+    def safe_download_csv(self, url: str, cache_file: str = None) -> pd.DataFrame:
+        """SSL 인증서 문제를 우회하여 안전하게 CSV 다운로드"""
+        try:
+            # 1차: 정상적인 방법으로 시도
+            logger.info(f"CSV 다운로드 시도: {url}")
+            return pd.read_csv(url)
+        except Exception as e:
+            logger.warning(f"정상 다운로드 실패: {e}")
+            
+            try:
+                # 2차: SSL 검증 우회하여 시도
+                logger.info("SSL 검증 우회하여 다운로드 시도...")
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                
+                with urllib.request.urlopen(url, context=ssl_context) as response:
+                    return pd.read_csv(response)
+            except Exception as e2:
+                logger.warning(f"SSL 우회 다운로드 실패: {e2}")
+                
+                # 3차: 캐시 파일 사용
+                if cache_file and os.path.exists(cache_file):
+                    logger.info(f"캐시 파일 사용: {cache_file}")
+                    return pd.read_csv(cache_file)
+                
+                # 4차: fdr.StockListing 시도
+                try:
+                    logger.info("FinanceDataReader StockListing 시도...")
+                    return fdr.StockListing('KRX-DESC')
+                except Exception as e3:
+                    logger.error(f"모든 다운로드 방법 실패: {e3}")
+                    raise Exception(f"KRX 데이터를 가져올 수 없습니다. 원본 에러: {e}")
 
     ############## internal funct ################
     def get_chrome_version(self):

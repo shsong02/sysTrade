@@ -99,7 +99,7 @@ class searchMacro:
         self.file_manager = config["fileControl"]
         self.param_init = config["mainInit"]
         self.macro_config = config["searchMacro"]
-        
+
         # 분석 기간 설정
         self.analysis_months = self.macro_config.get("periods", {}).get("analysis_months", 3)
         self.chart_months = self.macro_config.get("periods", {}).get("chart_months", 12)
@@ -248,38 +248,60 @@ class searchMacro:
                     # 지수 데이터 수집
                     df_index = stock.get_index_ohlcv_by_date(start_str, end_str, code)
                     if df_index.empty:
+                        logger.warning(f"{name} 지수 데이터가 없습니다.")
                         continue
                         
-                    # 수익률 계산
-                    first_close = df_index.iloc[0]['종가']
-                    last_close = df_index.iloc[-1]['종가']
-                    return_rate = ((last_close - first_close) / first_close) * 100
+                    # 데이터 정리
+                    df_index.rename(columns={
+                        '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close',
+                        '거래량': 'Volume', '등락률': 'Change', '변동폭': 'ChangeRatio'
+                    }, inplace=True)
+                    
+                    # 지수 분석
+                    current_level = df_index['Close'].iloc[-1]
+                    start_level = df_index['Close'].iloc[0]
+                    return_rate = ((current_level - start_level) / start_level * 100)
                     
                     # 변동성 계산
-                    df_index['일간수익률'] = df_index['종가'].pct_change()
-                    volatility = df_index['일간수익률'].std() * (252 ** 0.5) * 100  # 연간 변동성
+                    daily_returns = df_index['Close'].pct_change()
+                    volatility = daily_returns.std() * (252 ** 0.5) * 100  # 연간화된 변동성
+                    
+                    # 추세 판단
+                    ma20 = df_index['Close'].rolling(window=20).mean()
+                    ma60 = df_index['Close'].rolling(window=60).mean()
+                    current_ma20 = ma20.iloc[-1]
+                    current_ma60 = ma60.iloc[-1]
+                    
+                    if current_level > current_ma20 > current_ma60:
+                        trend = "상승"
+                    elif current_level < current_ma20 < current_ma60:
+                        trend = "하락"
+                    else:
+                        trend = "횡보"
                     
                     result[name] = {
-                        'return_rate': round(return_rate, 2),
-                        'volatility': round(volatility, 2),
-                        'current_level': last_close,
-                        'trend': 'Up' if return_rate > 0 else 'Down'
+                        'current_level': current_level,
+                        'return_rate': return_rate,
+                        'volatility': volatility,
+                        'trend': trend,
+                        'volume': df_index['Volume'].mean(),
+                        'data': df_index
                     }
                     
-                    logger.debug(f"{name} 지수 분석 완료: 수익률 {return_rate:.2f}%")
+                    logger.info(f"{name} 분석 완료 - 수익률: {return_rate:.2f}%, 추세: {trend}")
                     
                 except Exception as e:
-                    logger.warning(f"{name} 지수 분석 실패: {e}")
+                    logger.error(f"{name} 지수 분석 실패: {e}")
                     continue
                     
             return result
             
         except Exception as e:
-            logger.error(f"시장 지수 분석 실패: {e}")
+            logger.error(f"시장 지수 분석 중 오류: {e}")
             return {}
 
     def _analyze_etfs(self) -> Dict[str, Any]:
-        """ETF 분석 (기존 로직 개선)"""
+        """ETF 분석"""
         try:
             end_str = self.end_date.strftime("%Y%m%d")
             start_str = self.start_date.strftime("%Y%m%d")
@@ -287,63 +309,75 @@ class searchMacro:
             # ETF 목록 수집
             tickers = stock.get_etf_ticker_list(end_str)
             names = []
+            
             for ticker in tickers:
-                name = stock.get_etf_ticker_name(ticker)
-                names.append(name)
-
+                try:
+                    name = stock.get_etf_ticker_name(ticker)
+                    names.append(name)
+                except Exception as e:
+                    logger.warning(f"ETF {ticker} 이름 조회 실패: {e}")
+                    continue
+                    
             df_symbol = pd.DataFrame({'Symbol': tickers, 'Name': names})
             df_symbol.set_index('Symbol', inplace=True)
-
+            
             # ETF 가격 변동 데이터 수집 (재시도 로직)
-            tries = 0
+            tries = 0 
             max_tries = 10
+            df_etf = None
+            
             while tries < max_tries:
                 try:
                     df_etf = stock.get_etf_price_change_by_ticker(start_str, end_str)
                     break
-                except Exception:
-                    logger.warning(f"ETF 데이터 로딩 실패, 이전 날짜로 재시도: {start_str} -> {end_str}")
+                except Exception as e:
+                    logger.warning(f"ETF 데이터 로딩 실패 ({tries+1}/{max_tries}): {e}")
                     self.end_date -= timedelta(days=1)
                     end_str = self.end_date.strftime("%Y%m%d")
                     self.start_date -= timedelta(days=1)
                     start_str = self.start_date.strftime("%Y%m%d")
                     tries += 1
-
+                    
             if tries >= max_tries:
                 logger.error("ETF 데이터 로딩 실패")
                 return {"error": "ETF 데이터 로딩 실패"}
-
+            
+            if df_etf is None or df_etf.empty:
+                logger.error("ETF 데이터가 없습니다.")
+                return {"error": "ETF 데이터가 없습니다."}
+            
             # 데이터 정리
             df_etf = df_etf.join(df_symbol)
             df_etf.rename(columns={
                 '시가': 'Open', '종가': 'Close', '거래량': 'Volume',
                 '등락률': 'Change', '변동폭': 'ChangeRatio', '거래대금': 'VolumeCost'
             }, inplace=True)
-
+            
             # 거래량 필터링
             min_volume = self.data_config.get('etf_min_volume', 1000000)
             df_etf = df_etf[df_etf['VolumeCost'] >= min_volume]
-
+            
             # 수익률 순 정렬
             df_etf.sort_values(by="Change", ascending=False, inplace=True)
             df_positive = df_etf[df_etf.Change >= 0]
-
-            # 섹터별 분류 (개선된 로직)
+            
+            # 섹터별 분류
             sector_analysis = self._classify_etf_by_sector(df_positive)
-
+            
             # 상위 성과 ETF
             top_count = min(20, len(df_positive))
             top_performers = df_positive.head(top_count)
-
+            
             # 통계 계산
             total_etfs = len(df_etf)
             positive_etfs = len(df_positive)
             positive_ratio = (positive_etfs / total_etfs * 100) if total_etfs > 0 else 0
-
+            
             result = {
                 'total_etfs': total_etfs,
                 'positive_etfs': positive_etfs,
                 'positive_ratio': round(positive_ratio, 2),
+                'average_change': round(df_etf['Change'].mean(), 2),
                 'top_performers': [
                     {
                         'name': row['Name'],
@@ -355,204 +389,203 @@ class searchMacro:
                 ],
                 'sector_breakdown': sector_analysis
             }
-
+            
             # 차트 생성
             if self.report_config.get('generate_charts', True):
                 charts_count = self._generate_etf_charts(df_positive)
                 result['charts_generated'] = charts_count
-
+                
             return result
-
+            
         except Exception as e:
-            logger.error(f"ETF 분석 실패: {e}")
+            logger.error(f"ETF 분석 중 오류: {e}")
+            logger.exception("상세 오류:")
             return {"error": str(e)}
 
     def _classify_etf_by_sector(self, df_etf: pd.DataFrame) -> Dict[str, List]:
-        """ETF를 섹터별로 분류 (개선된 로직)"""
-        sector_keywords = {
-            'Technology': ['IT', '정보기술', '소프트웨어', '반도체', '전자', '인터넷'],
-            'Energy': ['에너지', '원유', '석유', '가스', '전력'],
-            'Finance': ['금융', '은행', '보험', '증권', '카드'],
-            'Healthcare': ['헬스케어', '의료', '바이오', '제약'],
-            'Consumer': ['소비', '유통', '식품', '음료'],
-            'Materials': ['소재', '화학', '철강', '금속'],
-            'Industrials': ['산업재', '건설', '조선', '항공'],
-            'RealEstate': ['부동산', 'REIT', '리츠'],
-            'Utilities': ['유틸리티', '전력', '가스', '수도'],
-            'Communications': ['통신', '미디어', '방송'],
-            'International': ['글로벌', '해외', '미국', '중국', '유럽', '신흥국'],
-            'Commodity': ['원자재', '금', '은', '구리', '농산물'],
-            'Bond': ['채권', '국채', '회사채']
-        }
-        
-        sector_analysis = {}
-        
-        for sector, keywords in sector_keywords.items():
-            sector_etfs = []
+        """ETF를 섹터별로 분류"""
+        try:
+            # 섹터 키워드 정의
+            sector_keywords = {
+                '기술/IT': ['IT', '반도체', '소프트웨어', '인터넷', '게임'],
+                '금융': ['은행', '증권', '보험', '금융'],
+                '에너지/화학': ['에너지', '화학', '2차전지', '태양광'],
+                '바이오/헬스케어': ['바이오', '제약', '헬스케어'],
+                '소비재': ['소비재', '유통', '음식료', '패션'],
+                '산업재': ['산업재', '기계', '건설', '철강'],
+                '원자재': ['원자재', '광물', '귀금속'],
+                '부동산': ['리츠', '부동산'],
+                '인프라': ['인프라', '통신', '운송'],
+                '기타': []
+            }
+            
+            # 섹터별 ETF 분류
+            sector_etfs = {sector: [] for sector in sector_keywords.keys()}
+            
             for idx, row in df_etf.iterrows():
-                name = row['Name']
-                if any(keyword in name for keyword in keywords):
-                    sector_etfs.append({
-                        'name': name,
+                etf_name = row['Name']
+                classified = False
+                
+                for sector, keywords in sector_keywords.items():
+                    if any(keyword in etf_name for keyword in keywords):
+                        sector_etfs[sector].append({
+                            'name': etf_name,
+                            'code': idx,
+                            'change': round(row['Change'], 2),
+                            'volume_cost': row['VolumeCost']
+                        })
+                        classified = True
+                        break
+                        
+                if not classified:
+                    sector_etfs['기타'].append({
+                        'name': etf_name,
                         'code': idx,
                         'change': round(row['Change'], 2),
                         'volume_cost': row['VolumeCost']
                     })
-            
-            if sector_etfs:
-                # 성과순 정렬
-                sector_etfs.sort(key=lambda x: x['change'], reverse=True)
-                sector_analysis[sector] = sector_etfs[:5]  # 상위 5개만
-        
-        return sector_analysis
-
-    def _analyze_sectors(self) -> Dict[str, Any]:
-        """개별 섹터 주요 종목 분석"""
-        try:
-            start_str = self.start_date.strftime("%Y%m%d")
-            end_str = self.end_date.strftime("%Y%m%d")
-            
-            # 업종별 성과 분석
-            sector_performance = {}
-            sector_top_stocks = {}
-            
-            # 업종별 ETF를 통한 간접 분석 (더 안정적)
-            sector_etfs = {
-                '금융': ['091170', '091180'],  # KODEX 은행, KODEX 증권
-                'IT/반도체': ['091160', '091230'],    # KODEX 반도체, KODEX IT
-                '바이오': ['091220'],          # KODEX 바이오
-                '에너지화학': ['130730'],      # KODEX 에너지화학
-                '건설': ['102970'],           # KODEX 건설
-                '자동차': ['091210'],         # KODEX 자동차
-                '2차전지': ['305080'],        # KODEX 2차전지산업
-                '게임': ['091220']            # KODEX 게임
-            }
-            
-            # 주요 지수 분석 (안정적인 지수들)
-            major_indices = {
-                'KOSPI': '1001',
-                'KOSDAQ': '2001', 
-                'KRX100': '1028',
-                '대형주': '1002',
-                '중형주': '1003'
-            }
-            
-            # 지수 분석
-            for index_name, index_code in major_indices.items():
-                try:
-                    df_index = stock.get_index_ohlcv_by_date(start_str, end_str, index_code)
                     
-                    if not df_index.empty and len(df_index) > 1:
-                        first_close = df_index.iloc[0]['종가']
-                        last_close = df_index.iloc[-1]['종가']
-                        return_rate = ((last_close - first_close) / first_close) * 100
-                        
-                        # 변동성 계산
-                        df_index['일간수익률'] = df_index['종가'].pct_change()
-                        volatility = df_index['일간수익률'].std() * (252 ** 0.5) * 100
-                        
-                        sector_performance[index_name] = {
-                            'return_rate': round(return_rate, 2),
-                            'volatility': round(volatility, 2),
-                            'current_level': last_close,
-                            'trend': 'Up' if return_rate > 0 else 'Down',
-                            'type': 'index'
-                        }
-                        
-                        logger.debug(f"{index_name} 지수 분석 완료: 수익률 {return_rate:.2f}%")
+            # 섹터별 통계 계산
+            sector_stats = {}
+            for sector, etfs in sector_etfs.items():
+                if etfs:
+                    changes = [etf['change'] for etf in etfs]
+                    sector_stats[sector] = {
+                        'count': len(etfs),
+                        'average_change': round(sum(changes) / len(changes), 2),
+                        'top_etfs': sorted(etfs, key=lambda x: x['change'], reverse=True)[:3]
+                    }
                     
-                except Exception as e:
-                    logger.debug(f"{index_name} 지수 분석 실패: {e}")
-                    continue
-            
-            # ETF를 통한 업종별 분석
-            for sector_name, etf_codes in sector_etfs.items():
-                try:
-                    sector_returns = []
-                    sector_volatilities = []
-                    sector_current_levels = []
-                    
-                    for etf_code in etf_codes:
-                        try:
-                            df_etf = stock.get_etf_ohlcv_by_date(start_str, end_str, etf_code)
-                            
-                            if not df_etf.empty and len(df_etf) > 1:
-                                first_close = df_etf.iloc[0]['종가']
-                                last_close = df_etf.iloc[-1]['종가']
-                                return_rate = ((last_close - first_close) / first_close) * 100
-                                
-                                df_etf['일간수익률'] = df_etf['종가'].pct_change()
-                                volatility = df_etf['일간수익률'].std() * (252 ** 0.5) * 100
-                                
-                                sector_returns.append(return_rate)
-                                sector_volatilities.append(volatility)
-                                sector_current_levels.append(last_close)
-                                
-                        except Exception as ee:
-                            logger.debug(f"ETF {etf_code} 데이터 수집 실패: {ee}")
-                            continue
-                    
-                    if sector_returns:
-                        avg_return = sum(sector_returns) / len(sector_returns)
-                        avg_volatility = sum(sector_volatilities) / len(sector_volatilities)
-                        avg_level = sum(sector_current_levels) / len(sector_current_levels)
-                        
-                        sector_performance[sector_name] = {
-                            'return_rate': round(avg_return, 2),
-                            'volatility': round(avg_volatility, 2),
-                            'current_level': round(avg_level, 2),
-                            'trend': 'Up' if avg_return > 0 else 'Down',
-                            'etf_count': len(sector_returns),
-                            'type': 'sector_etf'
-                        }
-                        
-                        logger.debug(f"{sector_name} ETF 분석 완료: 평균 수익률 {avg_return:.2f}%")
-                    
-                except Exception as e:
-                    logger.debug(f"{sector_name} ETF 분석 실패: {e}")
-                    continue
-            
-            # 성과순 정렬
-            sorted_sectors = sorted(sector_performance.items(), 
-                                  key=lambda x: x[1]['return_rate'], reverse=True)
-            
-            result = {
-                'sector_performance': sector_performance,
-                'top_sectors': [{'name': name, **data} for name, data in sorted_sectors[:10]],
-                'sector_rotation': self._analyze_sector_rotation(sector_performance),
-                'total_sectors_analyzed': len(sector_performance)
-            }
-            
-            logger.info(f"섹터별 분석 완료: {len(sector_performance)}개 섹터 분석")
-            return result
+            return sector_stats
             
         except Exception as e:
-            logger.error(f"섹터별 분석 실패: {e}")
+            logger.error(f"ETF 섹터 분류 중 오류: {e}")
+            return {}
+
+    def _analyze_sectors(self) -> Dict[str, Any]:
+        """섹터별 분석"""
+        try:
+            end_str = self.end_date.strftime("%Y%m%d")
+            start_str = self.start_date.strftime("%Y%m%d")
+            
+            # 섹터 코드 정의
+            sectors = {
+                'KRX100': '1003',
+                '건설': '1004',
+                '금융': '1005',
+                '기계': '1006',
+                '운수장비': '1007',
+                '철강/금속': '1008',
+                '에너지/화학': '1009',
+                '정보기술': '1010',
+                '반도체': '1011',
+                '바이오/의료': '1012',
+                '통신서비스': '1013',
+                '미디어/엔터': '1014',
+                '유통/소비재': '1015',
+                '전기/전자': '1016',
+                '건설/건자재': '1017',
+                '증권': '1018',
+                '보험': '1019',
+                '운송': '1020',
+                '유틸리티': '1021'
+            }
+            
+            result = {}
+            
+            for name, code in sectors.items():
+                try:
+                    # 섹터 지수 데이터 수집
+                    df_sector = stock.get_index_ohlcv_by_date(start_str, end_str, code)
+                    if df_sector.empty:
+                        logger.warning(f"{name} 섹터 데이터가 없습니다.")
+                        continue
+                        
+                    # 데이터 정리
+                    df_sector.rename(columns={
+                        '시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close',
+                        '거래량': 'Volume', '등락률': 'Change', '변동폭': 'ChangeRatio'
+                    }, inplace=True)
+                    
+                    # 섹터 분석
+                    current_level = df_sector['Close'].iloc[-1]
+                    start_level = df_sector['Close'].iloc[0]
+                    return_rate = ((current_level - start_level) / start_level * 100)
+                    
+                    # 변동성 계산
+                    daily_returns = df_sector['Close'].pct_change()
+                    volatility = daily_returns.std() * (252 ** 0.5) * 100  # 연간화된 변동성
+                    
+                    # 추세 판단
+                    ma20 = df_sector['Close'].rolling(window=20).mean()
+                    ma60 = df_sector['Close'].rolling(window=60).mean()
+                    current_ma20 = ma20.iloc[-1]
+                    current_ma60 = ma60.iloc[-1]
+                    
+                    if current_level > current_ma20 > current_ma60:
+                        trend = "상승"
+                    elif current_level < current_ma20 < current_ma60:
+                        trend = "하락"
+                    else:
+                        trend = "횡보"
+                    
+                    result[name] = {
+                        'current_level': current_level,
+                        'return_rate': return_rate,
+                        'volatility': volatility,
+                        'trend': trend,
+                        'volume': df_sector['Volume'].mean(),
+                        'data': df_sector
+                    }
+                    
+                    logger.info(f"{name} 섹터 분석 완료 - 수익률: {return_rate:.2f}%, 추세: {trend}")
+                    
+                except Exception as e:
+                    logger.error(f"{name} 섹터 분석 실패: {e}")
+                    continue
+                    
+            # 섹터 순위 계산
+            sector_ranks = sorted(
+                [(k, v['return_rate']) for k, v in result.items() if 'return_rate' in v],
+                key=lambda x: x[1],
+                reverse=True
+            )
+            
+            # 섹터 로테이션 분석
+            rotation_analysis = self._analyze_sector_rotation(result)
+            
+            return {
+                'sectors': result,
+                'rankings': [{'name': k, 'return_rate': v} for k, v in sector_ranks],
+                'rotation': rotation_analysis
+            }
+            
+        except Exception as e:
+            logger.error(f"섹터 분석 중 오류: {e}")
             return {}
 
     def _analyze_themes(self) -> Dict[str, Any]:
         """테마별 분석"""
         try:
             end_str = self.end_date.strftime("%Y%m%d")
+            start_str = self.start_date.strftime("%Y%m%d")
             
-            # 테마별 분석을 위한 키워드 기반 종목 분류
+            # 테마 키워드 정의
             theme_keywords = {
-                'AI/반도체': ['인공지능', 'AI', '반도체', '메모리', '시스템반도체', 'GPU', 'CPU'],
-                '2차전지/전기차': ['2차전지', '전기차', 'EV', '배터리', '리튬', '양극재', '음극재'],
-                '바이오/제약': ['바이오', '제약', '의료', '헬스케어', '신약', '백신'],
-                'K-컨텐츠': ['엔터테인먼트', '게임', '방송', '영화', '음악', '웹툰'],
-                '친환경/ESG': ['태양광', '풍력', '수소', '친환경', 'ESG', '탄소중립'],
-                '메타버스/NFT': ['메타버스', 'NFT', 'VR', 'AR', '가상현실'],
-                '우주항공/방산': ['우주', '항공', '방산', '위성', '드론'],
-                '로봇/자동화': ['로봇', '자동화', '스마트팩토리', 'IoT'],
-                '핀테크/블록체인': ['핀테크', '블록체인', '암호화폐', '디지털화폐'],
-                '식품/농업': ['식품', '농업', '푸드테크', '대체육']
+                '2차전지': ['2차전지', '리튬', '배터리', '음극재', '양극재', '분리막'],
+                '반도체': ['반도체', '파운드리', '메모리', 'DRAM', 'NAND'],
+                '인공지능': ['AI', '인공지능', '빅데이터', '클라우드'],
+                '메타버스': ['메타버스', 'VR', 'AR', '가상현실'],
+                '친환경': ['친환경', '수소', '태양광', '풍력', 'ESG'],
+                '바이오': ['바이오', '제약', '백신', '진단키트'],
+                '로봇': ['로봇', '자동화', 'RPA'],
+                '우주항공': ['우주', '항공', '위성', '드론'],
+                '게임': ['게임', '메타버스'],
+                '전기차': ['전기차', 'EV', '자율주행']
             }
             
-            theme_performance = {}
-            hot_themes = []
+            result = {}
             
-            # 각 테마별로 관련 종목 수집 및 분석
             for theme_name, keywords in theme_keywords.items():
                 try:
                     # 전체 종목 리스트 수집
@@ -570,59 +603,67 @@ class searchMacro:
                                 })
                         except:
                             continue
-                    
-                    if theme_stocks:
-                        # 테마 내 종목들의 평균 성과 계산
-                        theme_returns = []
-                        for stock_info in theme_stocks[:10]:  # 상위 10개 종목만
-                            try:
-                                start_str = self.start_date.strftime("%Y%m%d")
-                                df_stock = stock.get_market_ohlcv_by_date(start_str, end_str, stock_info['ticker'])
-                                if not df_stock.empty:
-                                    first_close = df_stock.iloc[0]['종가']
-                                    last_close = df_stock.iloc[-1]['종가']
-                                    return_rate = ((last_close - first_close) / first_close) * 100
-                                    theme_returns.append(return_rate)
-                            except:
-                                continue
                         
-                        if theme_returns:
-                            avg_return = sum(theme_returns) / len(theme_returns)
-                            theme_performance[theme_name] = {
-                                'avg_return': round(avg_return, 2),
-                                'stock_count': len(theme_stocks),
-                                'analyzed_count': len(theme_returns),
-                                'trend': 'Hot' if avg_return > 5 else 'Normal' if avg_return > 0 else 'Cold'
-                            }
+                    if not theme_stocks:
+                        continue
+                        
+                    # 테마 종목들의 가격 데이터 수집
+                    theme_data = []
+                    for stock_info in theme_stocks[:10]:  # 상위 10개 종목만
+                        try:
+                            df_stock = stock.get_market_ohlcv_by_date(
+                                start_str, end_str, stock_info['ticker']
+                            )
                             
-                            if avg_return > 5:  # 5% 이상 상승한 테마를 핫 테마로 분류
-                                hot_themes.append({
-                                    'name': theme_name,
-                                    'return': round(avg_return, 2),
-                                    'stock_count': len(theme_stocks)
+                            if not df_stock.empty:
+                                start_price = df_stock.iloc[0]['종가']
+                                end_price = df_stock.iloc[-1]['종가']
+                                return_rate = ((end_price - start_price) / start_price * 100)
+                                
+                                theme_data.append({
+                                    'name': stock_info['name'],
+                                    'code': stock_info['ticker'],
+                                    'return_rate': return_rate,
+                                    'current_price': end_price,
+                                    'volume': df_stock['거래량'].mean()
                                 })
                                 
-                    logger.debug(f"{theme_name} 테마 분석 완료")
-                    
+                        except Exception as e:
+                            logger.warning(f"테마 종목 {stock_info['name']} 데이터 수집 실패: {e}")
+                            continue
+                        
+                    if theme_data:
+                        # 테마 평균 수익률 계산
+                        returns = [stock['return_rate'] for stock in theme_data]
+                        avg_return = sum(returns) / len(returns)
+                        
+                        result[theme_name] = {
+                            'average_return': round(avg_return, 2),
+                            'stock_count': len(theme_data),
+                            'top_stocks': sorted(theme_data, key=lambda x: x['return_rate'], reverse=True)[:5]
+                        }
+                        
+                        logger.info(f"{theme_name} 테마 분석 완료 - 평균 수익률: {avg_return:.2f}%")
+                        
                 except Exception as e:
-                    logger.debug(f"{theme_name} 테마 분석 실패: {e}")
+                    logger.error(f"{theme_name} 테마 분석 실패: {e}")
                     continue
+                    
+            # 신규 테마 식별
+            emerging_themes = self._identify_emerging_themes(result)
             
-            # 핫 테마 정렬
-            hot_themes.sort(key=lambda x: x['return'], reverse=True)
-            
-            result = {
-                'theme_performance': theme_performance,
-                'hot_themes': hot_themes[:10],  # 상위 10개 핫 테마
-                'emerging_themes': self._identify_emerging_themes(theme_performance),
-                'total_themes_analyzed': len(theme_performance)
+            return {
+                'themes': result,
+                'rankings': sorted(
+                    [(k, v['average_return']) for k, v in result.items()],
+                    key=lambda x: x[1],
+                    reverse=True
+                ),
+                'emerging_themes': emerging_themes
             }
             
-            logger.info(f"테마별 분석 완료: {len(theme_performance)}개 테마 분석")
-            return result
-            
         except Exception as e:
-            logger.error(f"테마별 분석 실패: {e}")
+            logger.error(f"테마 분석 중 오류: {e}")
             return {}
 
     def _calculate_macro_indicators(self, analysis_data: Dict) -> Dict[str, Any]:
@@ -653,72 +694,129 @@ class searchMacro:
     def _determine_market_sentiment(self, analysis_data: Dict) -> str:
         """시장 심리 판단"""
         try:
-            positive_signals = 0
-            total_signals = 0
+            # 기본값
+            sentiment = "Neutral"
             
-            # ETF 긍정 비율 기반 판단
-            if 'etf_analysis' in analysis_data:
-                positive_ratio = analysis_data['etf_analysis'].get('positive_ratio', 0)
-                total_signals += 1
-                if positive_ratio > 60:
-                    positive_signals += 1
-                    
-            # 시장 지수 기반 판단
-            if 'market_indices' in analysis_data:
-                indices = analysis_data['market_indices']
-                for index_data in indices.values():
-                    total_signals += 1
-                    if index_data.get('return_rate', 0) > 0:
-                        positive_signals += 1
-                        
-            if total_signals == 0:
-                return 'Neutral'
+            # 지표 수집
+            market_breadth = analysis_data.get('macro_indicators', {}).get('market_breadth', 0)
+            market_momentum = analysis_data.get('macro_indicators', {}).get('market_momentum', 0)
+            growth_vs_value = analysis_data.get('macro_indicators', {}).get('growth_vs_value', 0)
+            
+            # 시장 지수 데이터
+            indices = analysis_data.get('market_indices', {})
+            kospi_data = indices.get('KOSPI', {})
+            kosdaq_data = indices.get('KOSDAQ', {})
+            
+            # 점수 계산
+            score = 0
+            
+            # 시장 참여도 점수 (0~2점)
+            if market_breadth >= 60:
+                score += 2
+            elif market_breadth >= 50:
+                score += 1
                 
-            positive_rate = positive_signals / total_signals
+            # 모멘텀 점수 (-2~2점)
+            if market_momentum >= 5:
+                score += 2
+            elif market_momentum >= 2:
+                score += 1
+            elif market_momentum <= -5:
+                score -= 2
+            elif market_momentum <= -2:
+                score -= 1
+                
+            # 성장주/가치주 점수 (-1~1점)
+            if growth_vs_value >= 3:
+                score += 1
+            elif growth_vs_value <= -3:
+                score -= 1
+                
+            # 변동성 점수 (-1~1점)
+            kospi_vol = kospi_data.get('volatility', 0)
+            kosdaq_vol = kosdaq_data.get('volatility', 0)
+            avg_vol = (kospi_vol + kosdaq_vol) / 2
             
-            if positive_rate >= 0.7:
-                return 'Very Positive'
-            elif positive_rate >= 0.5:
-                return 'Positive'
-            elif positive_rate >= 0.3:
-                return 'Neutral'
+            if avg_vol >= 30:
+                score -= 1
+            elif avg_vol <= 15:
+                score += 1
+                
+            # 최종 심리 판단
+            if score >= 4:
+                sentiment = "매우 긍정적"
+            elif score >= 2:
+                sentiment = "긍정적"
+            elif score >= 0:
+                sentiment = "중립적"
+            elif score >= -2:
+                sentiment = "부정적"
             else:
-                return 'Negative'
+                sentiment = "매우 부정적"
                 
+            logger.info(f"시장 심리 판단 완료: {sentiment} (점수: {score})")
+            return sentiment
+            
         except Exception as e:
             logger.error(f"시장 심리 판단 실패: {e}")
-            return 'Neutral'
+            return "Neutral"
 
     def _generate_recommendations(self, analysis_data: Dict) -> List[str]:
         """투자 권고사항 생성"""
         try:
             recommendations = []
             
+            # 시장 심리
             sentiment = analysis_data.get('market_sentiment', 'Neutral')
             
-            if sentiment in ['Very Positive', 'Positive']:
-                recommendations.append("시장 상승 모멘텀이 강합니다. 성장주 중심의 포트폴리오를 고려해보세요.")
-                
-                # 상위 섹터 추천
-                if 'etf_analysis' in analysis_data:
-                    sector_breakdown = analysis_data['etf_analysis'].get('sector_breakdown', {})
-                    if sector_breakdown:
-                        top_sector = max(sector_breakdown.keys(), 
-                                       key=lambda x: len(sector_breakdown[x]))
-                        recommendations.append(f"{top_sector} 섹터가 강세를 보이고 있습니다.")
-                        
-            elif sentiment == 'Negative':
-                recommendations.append("시장 하락 위험이 있습니다. 방어적 포트폴리오 구성을 권장합니다.")
-                recommendations.append("채권 ETF나 배당주 ETF를 고려해보세요.")
-                
+            # 기본 전략 추천
+            if sentiment in ["매우 긍정적", "긍정적"]:
+                recommendations.append("시장 상승세가 강해 적극적인 매수 전략 고려")
+                recommendations.append("성장주 중심의 포트폴리오 구성 검토")
+            elif sentiment in ["매우 부정적", "부정적"]:
+                recommendations.append("시장 하락 위험이 높아 보수적인 포지션 유지")
+                recommendations.append("가치주 중심의 안정적인 포트폴리오 구성 권장")
             else:
-                recommendations.append("시장이 혼조세를 보이고 있습니다. 분산투자를 권장합니다.")
+                recommendations.append("중립적인 시장 상황으로 섹터 분산 투자 권장")
+                
+            # 섹터별 추천
+            if 'sector_analysis' in analysis_data:
+                sectors = analysis_data['sector_analysis'].get('sectors', {})
+                strong_sectors = [
+                    (name, data) for name, data in sectors.items()
+                    if data.get('trend') == "상승" and data.get('return_rate', 0) > 0
+                ]
+                
+                if strong_sectors:
+                    top_sectors = sorted(strong_sectors, key=lambda x: x[1]['return_rate'], reverse=True)[:3]
+                    sector_names = [s[0] for s in top_sectors]
+                    recommendations.append(f"강세 섹터 주목: {', '.join(sector_names)}")
+                    
+            # 테마별 추천
+            if 'theme_analysis' in analysis_data:
+                themes = analysis_data['theme_analysis'].get('themes', {})
+                strong_themes = [
+                    (name, data) for name, data in themes.items()
+                    if data.get('average_return', 0) > 5
+                ]
+                
+                if strong_themes:
+                    top_themes = sorted(strong_themes, key=lambda x: x[1]['average_return'], reverse=True)[:3]
+                    theme_names = [t[0] for t in top_themes]
+                    recommendations.append(f"주목할 테마: {', '.join(theme_names)}")
+                    
+            # 리스크 관리 추천
+            macro_indicators = analysis_data.get('macro_indicators', {})
+            market_breadth = macro_indicators.get('market_breadth', 0)
+            
+            if market_breadth < 40:
+                recommendations.append("시장 참여도가 낮아 리스크 관리 강화 필요")
                 
             return recommendations
             
         except Exception as e:
             logger.error(f"투자 권고사항 생성 실패: {e}")
-            return []
+            return ["시장 상황을 더 지켜볼 필요가 있습니다."]
 
     def _generate_etf_charts(self, df_etf: pd.DataFrame) -> int:
         """ETF 차트 생성"""
@@ -790,36 +888,54 @@ class searchMacro:
     def _analyze_sector_rotation(self, sector_performance: Dict) -> Dict[str, Any]:
         """섹터 로테이션 분석"""
         try:
-            if not sector_performance:
-                return {}
+            # 섹터 분류
+            defensive_sectors = ['유틸리티', '금융', '통신서비스']
+            cyclical_sectors = ['소비재', '산업재', '원자재']
+            growth_sectors = ['기술/IT', '바이오/헬스케어']
+            
+            sector_types = {
+                'defensive': [],
+                'cyclical': [],
+                'growth': []
+            }
+            
+            # 섹터별 성과 분류
+            for sector_name, data in sector_performance.items():
+                if sector_name in defensive_sectors:
+                    sector_types['defensive'].append((sector_name, data))
+                elif sector_name in cyclical_sectors:
+                    sector_types['cyclical'].append((sector_name, data))
+                elif sector_name in growth_sectors:
+                    sector_types['growth'].append((sector_name, data))
                 
-            # 성과 기준으로 섹터 분류
-            strong_sectors = []
-            weak_sectors = []
+            # 섹터 유형별 평균 성과 계산
+            type_performance = {}
+            for type_name, sectors in sector_types.items():
+                if sectors:
+                    returns = [data.get('return_rate', 0) for _, data in sectors]
+                    type_performance[type_name] = {
+                        'average_return': round(sum(returns) / len(returns), 2),
+                        'sector_count': len(sectors),
+                        'top_sector': max(sectors, key=lambda x: x[1].get('return_rate', 0))[0]
+                    }
+                
+            # 로테이션 단계 판단
+            rotation_stage = "불명확"
             
-            for sector, data in sector_performance.items():
-                return_rate = data.get('return_rate', 0)
-                if return_rate > 3:  # 3% 이상 상승
-                    strong_sectors.append({'name': sector, 'return': return_rate})
-                elif return_rate < -3:  # 3% 이상 하락
-                    weak_sectors.append({'name': sector, 'return': return_rate})
+            def_return = type_performance.get('defensive', {}).get('average_return', 0)
+            cyc_return = type_performance.get('cyclical', {}).get('average_return', 0)
+            gro_return = type_performance.get('growth', {}).get('average_return', 0)
             
-            # 정렬
-            strong_sectors.sort(key=lambda x: x['return'], reverse=True)
-            weak_sectors.sort(key=lambda x: x['return'])
-            
-            # 로테이션 패턴 분석
-            rotation_pattern = "Neutral"
-            if len(strong_sectors) > len(weak_sectors) * 2:
-                rotation_pattern = "Risk-On"
-            elif len(weak_sectors) > len(strong_sectors) * 2:
-                rotation_pattern = "Risk-Off"
-            
+            if gro_return > cyc_return > def_return:
+                rotation_stage = "성장 국면"
+            elif cyc_return > gro_return > def_return:
+                rotation_stage = "확장 국면"
+            elif def_return > cyc_return and def_return > gro_return:
+                rotation_stage = "방어 국면"
+                
             return {
-                'strong_sectors': strong_sectors[:5],
-                'weak_sectors': weak_sectors[:5],
-                'rotation_pattern': rotation_pattern,
-                'sector_breadth': len(strong_sectors) - len(weak_sectors)
+                'stage': rotation_stage,
+                'type_performance': type_performance
             }
             
         except Exception as e:
@@ -827,33 +943,38 @@ class searchMacro:
             return {}
 
     def _identify_emerging_themes(self, theme_performance: Dict) -> List[Dict]:
-        """신흥 테마 식별"""
+        """신규 테마 식별"""
         try:
-            emerging = []
+            emerging_themes = []
             
-            for theme, data in theme_performance.items():
-                # 신흥 테마 기준: 중간 정도 수익률이지만 관련 종목 수가 적은 테마
-                avg_return = data.get('avg_return', 0)
+            for theme_name, data in theme_performance.items():
+                avg_return = data.get('average_return', 0)
                 stock_count = data.get('stock_count', 0)
+                top_stocks = data.get('top_stocks', [])
                 
-                if 1 < avg_return < 5 and stock_count < 20:
-                    emerging.append({
-                        'name': theme,
-                        'return': avg_return,
+                # 신규 테마 판단 기준
+                if avg_return > 10 and stock_count >= 3:
+                    emerging_themes.append({
+                        'name': theme_name,
+                        'return_rate': avg_return,
                         'stock_count': stock_count,
-                        'potential': 'High' if avg_return > 2 else 'Medium'
+                        'representative_stocks': [
+                            {'name': stock['name'], 'return_rate': stock['return_rate']}
+                            for stock in top_stocks[:3]
+                        ]
                     })
+                
+            # 수익률 기준 정렬
+            emerging_themes.sort(key=lambda x: x['return_rate'], reverse=True)
             
-            # 수익률 순 정렬
-            emerging.sort(key=lambda x: x['return'], reverse=True)
-            return emerging[:5]
+            return emerging_themes[:5]  # 상위 5개 신규 테마만 반환
             
         except Exception as e:
-            logger.error(f"신흥 테마 식별 실패: {e}")
+            logger.error(f"신규 테마 식별 실패: {e}")
             return []
 
     def _perform_llm_analysis(self, analysis_data: Dict) -> Dict[str, Any]:
-        """LLM 기반 시황 분석 수행 (API 에러 처리 포함)"""
+        """LLM 기반 시황 분석"""
         try:
             if not self.llm_config.get("enabled", False):
                 logger.info("LLM 분석이 비활성화되어 건너뜁니다")
@@ -892,7 +1013,7 @@ class searchMacro:
                     'api_error': True,
                     'message': f'API 연결 실패로 인해 LLM 분석을 건너뛰었습니다: {e}'
                 }
-            
+                
             # 1. 전체 시장 개관
             if analysis_scope.get("market_overview", True) and api_error_count < max_api_errors:
                 market_prompt = self._create_market_overview_prompt(analysis_data)
@@ -900,7 +1021,7 @@ class searchMacro:
                 llm_results['market_overview'] = result
                 if 'error' in result:
                     api_error_count += 1
-            
+                
             # 2. 섹터별 상세 분석 (API 에러가 적으면 계속)
             if analysis_scope.get("sector_analysis", True) and api_error_count < max_api_errors:
                 sector_prompt = self._create_sector_analysis_prompt(analysis_data)
@@ -908,7 +1029,7 @@ class searchMacro:
                 llm_results['sector_analysis'] = result
                 if 'error' in result:
                     api_error_count += 1
-            
+                
             # 3. ETF 트렌드 분석
             if analysis_scope.get("etf_trends", True) and api_error_count < max_api_errors:
                 etf_prompt = self._create_etf_trends_prompt(analysis_data)
@@ -916,7 +1037,7 @@ class searchMacro:
                 llm_results['etf_trends'] = result
                 if 'error' in result:
                     api_error_count += 1
-            
+                
             # API 에러가 많으면 나머지 분석 건너뛰기
             if api_error_count >= max_api_errors:
                 logger.warning(f"API 에러가 {api_error_count}회 발생하여 나머지 LLM 분석을 건너뜁니다")
@@ -928,7 +1049,7 @@ class searchMacro:
                     llm_results['theme_analysis'] = result
                     if 'error' in result:
                         api_error_count += 1
-                
+                    
                 # 5. 기술적 지표 분석
                 if analysis_scope.get("technical_indicators", True) and api_error_count < max_api_errors:
                     technical_prompt = self._create_technical_analysis_prompt(analysis_data)
@@ -936,7 +1057,7 @@ class searchMacro:
                     llm_results['technical_indicators'] = result
                     if 'error' in result:
                         api_error_count += 1
-                
+                    
                 # 6. 시장 심리 분석
                 if analysis_scope.get("sentiment_analysis", True) and api_error_count < max_api_errors:
                     sentiment_prompt = self._create_sentiment_analysis_prompt(analysis_data)
@@ -944,38 +1065,30 @@ class searchMacro:
                     llm_results['sentiment_analysis'] = result
                     if 'error' in result:
                         api_error_count += 1
-                
+                    
                 # 7. 종합 분석 (가장 중요하므로 마지막에)
                 if api_error_count < max_api_errors:
                     comprehensive_prompt = self._create_comprehensive_analysis_prompt(analysis_data, llm_results)
                     result = self._call_llm(comprehensive_prompt, "comprehensive_analysis")
                     llm_results['comprehensive_analysis'] = result
-            
-            # 토큰 사용량 집계
+                
+            # 토큰 사용량 계산
             total_tokens = sum(
-                result.get('tokens_used', 0) 
-                for result in llm_results.values() 
-                if isinstance(result, dict) and 'tokens_used' in result
+                result.get('tokens_used', 0)
+                for result in llm_results.values()
+                if isinstance(result, dict)
             )
-            
-            # 성공한 분석 개수
-            successful_analyses = len([
-                result for result in llm_results.values() 
-                if isinstance(result, dict) and 'error' not in result
-            ])
-            
-            logger.info(f"LLM 시황 분석 완료 - 성공: {successful_analyses}/{len(llm_results)}, API 에러: {api_error_count}")
             
             return {
                 'llm_results': llm_results,
                 'total_tokens_used': total_tokens,
-                'successful_analyses': successful_analyses,
-                'api_error_count': api_error_count,
-                'analysis_timestamp': datetime.now().isoformat()
+                'analysis_timestamp': datetime.now().isoformat(),
+                'api_errors': api_error_count
             }
             
         except Exception as e:
-            logger.error(f"LLM 시황 분석 실패: {e}")
+            logger.error(f"LLM 분석 중 오류: {e}")
+            logger.exception("상세 오류:")
             return {
                 'error': str(e),
                 'analysis_timestamp': datetime.now().isoformat()
