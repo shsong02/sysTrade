@@ -19,6 +19,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup as Soup
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 import FinanceDataReader as fdr
 
 # chart
@@ -59,7 +60,7 @@ class financeScore:
         logger.info(f"config 파일을 로드 하였습니다. (파일명: {config_file})")
 
         # global 변수 선언
-        self.file_manager = config["fileControl"]
+        self.file_manager = config["data_management"]
         self.param_init = config["mainInit"]
         self.score_rule = config["scoreRule"]
         # self.keys = config["keyList"]
@@ -99,7 +100,7 @@ class financeScore:
 
         opt = webdriver.ChromeOptions()
         opt.add_argument('headless')
-        driver = webdriver.Chrome(options=opt, executable_path=self.driver_path)
+        driver = webdriver.Chrome(service=Service(self.driver_path), options=opt)
 
         code = str(code).zfill(6)
         # 네이버 재무재표 주소
@@ -408,7 +409,7 @@ class financeScore:
             # pylint: disable= W0612
             for i in range(cpu_cnt):
                 drivers.append(webdriver.Chrome(
-                    options=opt, executable_path=self.driver_path))
+                    service=Service(self.driver_path), options=opt))
 
             codes = df_stocks['Symbol'].to_list()
             names = df_stocks['Name'].to_list()
