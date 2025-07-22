@@ -18,8 +18,7 @@ import pandas as pd
 # html
 import requests
 from bs4 import BeautifulSoup as Soup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+from playwright.sync_api import sync_playwright
 import FinanceDataReader as fdr
 
 # chart
@@ -65,10 +64,11 @@ class financeScore:
         self.score_rule = config["scoreRule"]
         # self.keys = config["keyList"]
 
-        self.driver_path = None
 
     def finance_state(self, code_name, mode='quarter',):
         """종목 코드에 대한 재무제표를 가져옵니다.
+        
+        playwright를 사용하여 데이터를 크롤링합니다.
 
         ex:
                              2019.12  2020.12   2021.12 2022.12(E)
@@ -97,69 +97,66 @@ class financeScore:
         # init
         code = code_name[0]
         name = code_name[1]
+        
+        df_tot = pd.DataFrame()
+        URL = f"https://navercomp.wisereport.co.kr/v2/company/c1040001.aspx?cmp_cd={str(code).zfill(6)}"
 
-        opt = webdriver.ChromeOptions()
-        opt.add_argument('headless')
-        driver = webdriver.Chrome(service=Service(self.driver_path), options=opt)
-
-        code = str(code).zfill(6)
-        # 네이버 재무재표 주소
         try:
-            URL = f"https://navercomp.wisereport.co.kr/v2/company/c1040001.aspx?cmp_cd={code}"
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                page.goto(URL)
 
-            driver.get(URL)
+                # "올바른 종목이 아닙니다" 알림 처리
+                # Playwright는 알림을 자동으로 처리하지 않지만, 페이지 로드 실패 등으로 감지 가능
+                # if "c1040001" not in page.url: # 성공적인 페이지 로드의 URL 일부
+                #     logger.warning(f"'{name}({code})' 페이지 로드에 실패했거나 유효하지 않은 종목일 수 있습니다. 건너뜁니다.")
+                #     browser.close()
+                #     return pd.DataFrame()
 
-            # 분기 버튼 클릭
-            if mode == 'annual':
-                radio = driver.find_element('id', 'frqTyp0')
-                radio.click()
-            else:
-                radio = driver.find_element('id', 'frqTyp1')
-                radio.click()
+                # 분기/연간 버튼 클릭 및 데이터 파싱
+                if mode == 'annual':
+                    page.locator('#frqTyp0').click()
+                else:
+                    page.locator('#frqTyp1').click()
 
-            # 분기/연간 선택 후, 조회 클릭
-            butt = driver.find_element('id', 'hfinGubun')
-            butt.click()
+                page.locator('#hfinGubun').click()
 
-            profit = driver.find_element('id', 'val_tab1')  # 수익성
-            growth = driver.find_element('id', 'val_tab2')  # 성장성
-            stability = driver.find_element('id', 'val_tab3')  # 안정성
-            activity = driver.find_element('id', 'val_tab4')  # 활동성
+                ids = ['#val_tab1', '#val_tab2', '#val_tab3', '#val_tab4'] # profit, growth, stability, activity
+                df_all = []
 
-            ids = [profit, growth, stability, activity]
-            sectors = ['수익성', '성장성', '안정성', '활동성']
-            df_all = []
-            # pyilnt: disable=W0622, W0612
-            for _id, _sector in zip(ids, sectors):
-                _id.click()
-                time.sleep(0.3)
-                html = driver.page_source
-                soup = Soup(html, 'html.parser')
-                table = soup.select('table')
-                table_html = str(table)  # 테이블 html 정보를 문자열로 변경하기
-                table_df_list = pd.read_html(table_html)  # 테이블 정보 읽어 오기
-                df = table_df_list[6]  # 투자정보 테이블 번호
-                df2 = df.iloc[:, :6]
-                df2.columns = ['항목', 'month-12', 'month-9',
-                               'month-6', 'month-3', 'month-0']
-                # df2['투자지표'] = sector
-                df2 = df2.replace({'항목': '펼치기  '}, {'항목': ''}, regex=True)
-                df_all.append(df2)
+                for _id in ids:
+                    page.locator(_id).click()
+                    time.sleep(0.3)
+                    html = page.content()
+                    soup = Soup(html, 'html.parser')
+                    table = soup.select('table')
+                    table_html = str(table)
+                    table_df_list = pd.read_html(table_html)
+                    df = table_df_list[6]
+                    df2 = df.iloc[:, :6]
+                    df2.columns = ['항목', 'month-12', 'month-9', 'month-6', 'month-3', 'month-0']
+                    df2 = df2.replace({'항목': '펼치기  '}, {'항목': ''}, regex=True)
+                    df_all.append(df2)
+                
+                browser.close()
 
             df_tot = pd.concat(df_all)
             df_tot = df_tot.set_index(['항목'])
             df_tot = df_tot.loc[select[0]]
-            # driver.clos()
+
         except Exception as error:
-            print(f"문제되는 URL: {URL}")
+            print(f"Playwright 처리 중 문제 발생 (URL: {URL})")
             logger.error(error)
             df_tot = pd.DataFrame()
+
 
         # 새로운 df 생성 - score 저장
         new_cols = []
         new_cols.append('code')
         new_cols.append('url')
         for i in select[0]:
+            new_cols.append(f"{i}")
             new_cols.append(f"{i}_list")
             new_cols.append(f"{i}_score")
         new_cols.append('total_score')
@@ -227,6 +224,7 @@ class financeScore:
                                 sc -= 3  # 해당 경우가 존재하나??
                     sc_sum.append(sc)
                     val_str = ','.join(str(e) for e in val_list)
+                    df_out.loc[name, f"{idx}"] = val_list[-1] if val_list else 'N/A'
                     df_out.loc[name, f"{idx}_list"] = val_str
                     df_out.loc[name, f"{idx}_score"] = sc
             total_score = sum(sc_sum)
@@ -302,15 +300,38 @@ class financeScore:
         _msg = f"스코어= {total_score:<6} : 종목이름={name:<20}, 종목코드={code:<10} -- PID: {c_proc.pid}, PROC_NAME: {c_proc.name}"
         logger.info(_msg)
 
+        # 수집 데이터 확인용 로그
+        try:
+            log_roe = df_out.loc[name, 'ROE']
+            log_debt = df_out.loc[name, '부채비율']
+            log_per = df_out.loc[name, 'PER']
+            log_pbr = df_out.loc[name, 'PBR']
+            logger.info(f"  >> 수집 데이터: ROE={log_roe}, 부채비율={log_debt}, PER={log_per}, PBR={log_pbr}")
+        except KeyError:
+            logger.info(f"  >> 종목 '{name}'의 일부 데이터는 수집되지 않았습니다.")
+
         # SSHTEST
         if '매출총이익률_list' in df_out.columns.to_list():
             print(df_out)
 
-        # close
-        driver.close()
-        driver.quit()
-
         return df_out
+
+    def _install_playwright_browsers(self):
+        """Playwright에 필요한 브라우저가 설치되어 있는지 확인하고, 없으면 설치합니다."""
+        try:
+            # 간단한 Playwright 작업을 시도하여 브라우저 존재 여부 확인
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                browser.close()
+            logger.info("Playwright 브라우저가 이미 설치되어 있습니다.")
+        except Exception:
+            logger.info("Playwright 브라우저를 찾을 수 없습니다. 설치를 시작합니다...")
+            try:
+                os.system("playwright install")
+                logger.info("Playwright 브라우저 설치가 완료되었습니다.")
+            except Exception as e:
+                logger.error(f"Playwright 브라우저 설치에 실패했습니다: {e}")
+                raise
 
     def run(self):
         # 거래소 모든 코드 가져오기
@@ -328,6 +349,7 @@ class financeScore:
 
         params = self.param_init
         files = self.file_manager
+        finance_scores_path = os.path.join(files["base_path"], files["discovery"]["finance_scores"]["path"])
 
         ######################
         ####    STEP1     ####
@@ -348,7 +370,7 @@ class financeScore:
                 "FinanceDataReader 가 정상적으로 동작하지 않아 이전 작업 파일을 불러 옵니다.")
             # CSV 파일만 필터링
             csv_files = [f for f in os.listdir(
-                files["finance_score"]["path"]) if f.endswith('.csv')]
+                finance_scores_path) if f.endswith('.csv')]
 
             # 날짜 형식에 맞게 파일 이름 파싱 및 최신 파일 찾기
             date_format = '%Y-%m-%d'
@@ -373,7 +395,7 @@ class financeScore:
             # 최신 파일을 DataFrame으로 읽어오기
             if latest_file:
                 latest_file_path = os.path.join(
-                    files["finance_score"]["path"], latest_file)
+                    finance_scores_path, latest_file)
                 df_stocks = pd.read_csv(latest_file_path)
                 # origin column 만 남기기
                 filtered_columns = [
@@ -392,24 +414,11 @@ class financeScore:
         ######################
 
         if params["ena_step2"] is True:
-            df_stocks_state = []
+            # Playwright 브라우저 설치 확인 및 자동 설치
+            self._install_playwright_browsers()
 
             cpu_cnt = 8
             pool = Pool(processes=cpu_cnt)
-
-            opt = webdriver.ChromeOptions()
-            opt.add_argument('headless')
-            drivers = []
-
-            ## Naver 크롤링 하기 위해 chrome 최신 드라이버 설치 
-            chrome_version = self.get_chrome_version()
-            self.driver_path = self.download_chromedriver(chrome_version)
-            print(f"ChromeDriver for Chrome version {chrome_version} has been downloaded and installed.")
-
-            # pylint: disable= W0612
-            for i in range(cpu_cnt):
-                drivers.append(webdriver.Chrome(
-                    service=Service(self.driver_path), options=opt))
 
             codes = df_stocks['Symbol'].to_list()
             names = df_stocks['Name'].to_list()
@@ -441,98 +450,22 @@ class financeScore:
 
             # 파일 저장
             now = datetime.now().strftime("%Y-%m-%d")
-            file_path = self.file_manager["finance_score"]["path"]
-            file_name = self.file_manager["finance_score"]["name"]
-            if file_name == "":
-                file_name = f"stock_items_{now}.csv"
+            file_path = finance_scores_path
+            file_name_format = self.file_manager["discovery"]["finance_scores"]["filename_format"]
+            file_name = file_name_format.replace("{date}", now)
             stu.file_save(df_step2, file_path, file_name, replace=False)
         else:  # disable step2
-            file_path = self.file_manager["finance_score"]["path"]
+            file_path = finance_scores_path
             # 파일 하나임을 가정 함 (todo: 멀티 파일 지원은 추후 고려)
-            file_name = os.listdir('./data/finance_score/')[0]
-            df_step2 = pd.read_csv(file_path + file_name, index_col=0)
+            csv_files = sorted([f for f in os.listdir(file_path) if f.endswith('.csv')])
+            if csv_files:
+                latest_file = csv_files[-1]
+                df_step2 = pd.read_csv(os.path.join(file_path, latest_file), index_col=0)
+            else:
+                logger.error(f"{file_path}에 finance_score 파일이 없습니다.")
+                return
 
     ############## internal funct ################
-    def get_chrome_version(self):
-        """ chrome 버전을 확인하는 코드. Naver 크롤링 시, chrome dirver 를 사용하기 때문
-        """
-        # macOS의 경우
-        if os.name == 'posix':
-            process = os.popen('/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version')
-            version = process.read().strip().replace('Google Chrome ', '')
-            process.close()
-        # Windows의 경우
-        elif os.name == 'nt':
-            program_files_path = os.getenv('PROGRAMFILES')
-            if os.path.isdir(os.path.join(program_files_path, 'Google/Chrome/Application')):
-                path = os.path.join(program_files_path, 'Google/Chrome/Application/chrome.exe')
-            else:
-                path = 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-            version = check_output([path, '--version']).decode().strip().replace('Google Chrome ', '')
-        # Linux의 경우
-        else:
-            version = os.popen('google-chrome --version').read().strip().replace('Google Chrome ', '')
-
-        print(f"chrome version (current): {version}")
-        return version
-
-    def download_chromedriver(self,  version):
-        """ chrome 과 동일한 버전의 chromedriver 를 설치. Naver 크롤링에 사용됨 
-        """
-        
-        # macOS ARM 아키텍처 확인
-        if os.name == 'posix' and platform.machine() == 'arm64':
-            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/mac-arm64/chromedriver-mac-arm64.zip"
-        # 기존 macOS (Intel 아키텍처)
-        elif os.name == 'posix':
-            url =f"https://storage.googleapis.com/chrome-for-testing-public/{version}/mac-x64/chromedriver-mac-x64.zip"
-        # Windows
-        elif os.name == 'nt':
-            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/linux64/chromedriver-linux64.zip"
-        # Linux
-        else:
-            url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/win64/chromedriver-win64.zip"
-        
-        # ChromeDriver 다운로드 및 압축 해제
-        try:
-            response = requests.get(url)
-        except requests.exceptions.RequestException as e:
-            print(e)
-        zip_file_path = "chromedriver.zip"
-        with open(zip_file_path, 'wb') as file:
-            file.write(response.content)
-        with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-            zip_ref.extractall()  # 현재 디렉토리에 압축 해제
-            extracted_files = zip_ref.namelist()  # 압축 해제한 파일 목록 가져오기
-        
-        for extracted_file in extracted_files:
-            # 파일 또는 디렉토리의 전체 경로 구성
-            extracted_path = os.path.join(os.getcwd(), extracted_file)
-            # 권한 변경
-            os.chmod(extracted_path, 0o755)
-
-        os.remove(zip_file_path)  # 다운로드한 zip 파일 삭제
-
-        ## driver 를 PATH 에 추가 
-        ########################
-        # 현재 작업 디렉토리 경로 구하기
-        current_working_directory = os.getcwd()
-    
-        # chromedriver 경로 설정 (현재 작업 디렉토리 내의 chromedriver-mac-arm64)
-        chromedriver_path = os.path.join(current_working_directory, 'chromedriver-mac-arm64/chromedriver')
-    
-        # PATH 환경 변수에 chromedriver 경로 추가
-        if chromedriver_path not in os.environ['PATH']:
-            os.environ['PATH'] += os.pathsep + chromedriver_path
-            print("Chromedriver path added to PATH.")
-        else:
-            print("Chromedriver path is already in PATH.")
-    
-        # 현재 PATH 환경 변수 출력 (확인용)
-        print(f"Current PATH: {os.environ['PATH']}")
-        return chromedriver_path
-
-
     def _make_score(self, score_data, score_list, mode='last'):
         ''' 종벽별 재무제표 값을 스코어 를 만듭니다.
 
