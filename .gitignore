@@ -11,3 +11,5 @@ __pycache__/
 src/kis
 
 .env
+src/kis
+log/systemTrade.log
